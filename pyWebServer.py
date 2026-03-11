@@ -15,25 +15,33 @@ from pyniryo import NiryoRobot
 
 import asyncio
 import websockets as ws
+from websockets.asyncio.client import connect as wsconnect
 
 import math
 
+import json
+
 # config variables
 # IP address for the robot
-ROBOT_IP = "10.10.10.10"         # wifi hotspot
-# ROBOT_IP = "169.254.200.200"   # ethernet cable
+# ROBOT_IP = "10.10.10.10"         # wifi hotspot
+ROBOT_IP = "169.254.200.200"   # ethernet cable
 
 # number of attempts to connect to the arm
 NO_CONNECTION_ATTEMPTS = 3
 
 # localhost websocket port to send and recieve data to/from Practable.io
-PRACTABLE_PORT_NUMBER = 8888 # TODO: this is a guess. verify.
+PRACTABLE_WEBSOCKET_ADDRESS = "ws://localhost:8888/ws/data" # TODO: this is a guess. verify.
 
 # TCP limits
 # TODO: verify units
-TCP_LIMIT_X = 9999  # TODO: get a reasonable number/determine if necessary
-TCP_LIMIT_Y = 9999  # TODO: get a reasonable number/determine if necessary
-TCP_LIMIT_Z = 30     # TODO: verify.
+TCP_LIMIT_UPPER_X = 490
+TCP_LIMIT_LOWER_X = -490
+
+TCP_LIMIT_UPPER_Y = 490
+TCP_LIMIT_LOWER_Y = -490
+
+TCP_LIMIT_UPPER_Z = 490
+TCP_LIMIT_LOWER_Z = 10      # NOTE: 0 is barely safe on the table, limiting to 10 for safety buffer
 
 # code begins here
 
@@ -66,10 +74,19 @@ joints = robot.get_joints()
 # returns whether the given pose is a valid (and SAFE) position.
 # get this function right, or be ready to pay 4 grand when someone breaks the arm
 def verifyPose(pose):
-    return True # FOR TESTING
+    # return True # FOR TESTING
     # rough check
     # 1: check the pose x,y,z values against tcp limits
-    
+    return (pose.x <= TCP_LIMIT_UPPER_X and 
+            pose.x >= TCP_LIMIT_LOWER_X and
+
+            pose.y <= TCP_LIMIT_UPPER_Y and
+            pose.y >= TCP_LIMIT_LOWER_Y and
+
+            pose.z <= TCP_LIMIT_UPPER_Z and
+            pose.z >= TCP_LIMIT_LOWER_Z
+            )
+
     # precise check
     # 1: calculate bounds of the physical gripper from the tcp position
     # 2: check the verts of the bounding box against the tcp limits
@@ -112,4 +129,32 @@ def setJoint(jointNumber, rotInRad):
     robot.move(pn.JointsPosition(j[0],j[1],j[2],j[3],j[4],j[5]))
 
 # setup practable websocket connection
-pn.JointsPosition()
+async def dataHandler():
+    # establish connection
+    async with wsconnect(PRACTABLE_WEBSOCKET_ADDRESS) as websoc:
+        # we will stop the loop via a user command or an error
+        while True:
+            # when connected, things should always go as follows:
+            #   recieve and interperate request from practable
+            #   if command is good, send to arm
+            #   send success or fail message back to practable
+
+            response = await websoc.recv()
+            print (response)# TESTING AND DEBUG
+
+            # convert response from json to python dict
+            try:
+                responseJSON = json.loads(response)
+            except json.decoder.JSONDecodeError:
+                # command was bad json. send a reply stating as such
+                websoc.send({"message":"Error: Command was not valid JSON"})
+
+            # we now have valid json. interperate it.
+            # TESTING
+            if (responseJSON["command"] == "rotateJoint"):
+                rotateJoint(int(responseJSON["joint"]),float(responseJSON["rad"]))
+            
+
+        
+
+asyncio.run(dataHandler())
