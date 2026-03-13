@@ -190,11 +190,13 @@ async def dataHandler():
                     # command could be malformed. check just to be safe
                     try:
                         print(responseJSON["text"])
-                        websoc.send({"replyComm":"signal","result":"success","displayText":"","message":"Signal wit text: "+responseJSON["text"]+" recieved successfully"})
+                        #print("BEFORE AWAIT")
+                        await websoc.send('{"replyComm":"signal","result":"success","displayText":"","message":"Signal recieved successfully"}')
+                        #print("AFTER AWAIT")
                         pass
                     except KeyError:
                         print("ERROR: RECIEVED MALFORMED SIGNAL: "+str(responseJSON))
-                        websoc.send({"replyComm":"NOT_SET","result":"fail","displayText":"Error: Invalid command.","message":"ERROR: COMMAND ATTRIBUTE NOT SET FOR RECIEVED COMMAND"})
+                        await websoc.send('{"replyComm":"NOT_SET","result":"fail","displayText":"Error: Invalid command.","message":"ERROR: COMMAND ATTRIBUTE NOT SET FOR RECIEVED COMMAND"}')
 
                 case "moveTCP":
                     # command could be malformed. check just to be safe
@@ -212,15 +214,15 @@ async def dataHandler():
                         # NOTE: given values are in cm not mm
                         if (movePose(pn.PoseObject(float(responseJSON["x"]), float(responseJSON["y"]), float(responseJSON["z"]), float(responseJSON["roll"]), float(responseJSON["pitch"]), float(responseJSON["yaw"])))):
                             # move completed successfully
-                            websoc.send({"replyComm":"moveTCP","result":"success","displayText":"Move Complete","message":"TCP MOVE COMPLETE"})
+                            await websoc.send('{"replyComm":"moveTCP","result":"success","displayText":"Move Complete","message":"TCP MOVE COMPLETE"}')
                         else:
                             # move failed
-                            websoc.send({"replyComm":"moveTCP","result":"fail","displayText":"Move Failed: Location Invalid","message":"TCP MOVE FAIL - INVALID LOCATION"})
+                            await websoc.send('{"replyComm":"moveTCP","result":"fail","displayText":"Move Failed: Location Invalid","message":"TCP MOVE FAIL - INVALID LOCATION"}')
                     
                     except KeyError:
                         # malformed command
                         print("ERROR: RECIEVED MALFORMED moveTCP: "+str(responseJSON))
-                        websoc.send({"replyComm":"moveTCP","result":"fail","displayText":"Error: moveTCP command is missing required arguments.","message":"ERROR: moveTCP COMMAND IS MISSING REQUIRED ARGUMENTS"})
+                        await websoc.send('{"replyComm":"moveTCP","result":"fail","displayText":"Error: moveTCP command is missing required arguments.","message":"ERROR: moveTCP COMMAND IS MISSING REQUIRED ARGUMENTS"}')
                 
                 case "moveJoints":
                     # command could be malformed. check just to be safe
@@ -238,27 +240,27 @@ async def dataHandler():
                         # NOTE: given values are in cm not mm
                         if (moveJointposition(pn.PoseObject(float(responseJSON["j0"]), float(responseJSON["j1"]), float(responseJSON["j2"]), float(responseJSON["j3"]), float(responseJSON["j4"]), float(responseJSON["j5"])))):
                             # move completed successfully
-                            websoc.send({"replyComm":"moveJoints","result":"success","displayText":"Move Complete","message":"JOINTS MOVE COMPLETE"})
+                            await websoc.send('{"replyComm":"moveJoints","result":"success","displayText":"Move Complete","message":"JOINTS MOVE COMPLETE"}')
                         else:
                             # move failed
-                            websoc.send({"replyComm":"moveJoints","result":"fail","displayText":"Move Failed: Location Invalid","message":"JOINTS MOVE FAIL - INVALID LOCATION"})
+                            await websoc.send('{"replyComm":"moveJoints","result":"fail","displayText":"Move Failed: Location Invalid","message":"JOINTS MOVE FAIL - INVALID LOCATION"}')
                     
                     except KeyError:
                         print("ERROR: RECIEVED MALFORMED moveJoints: "+str(responseJSON))
-                        websoc.send({"replyComm":"moveJoints","result":"fail","displayText":"Error: moveJoints command is missing required arguments.","message":"ERROR: moveJoints COMMAND IS MISSING REQUIRED ARGUMENTS"})
+                        await websoc.send('{"replyComm":"moveJoints","result":"fail","displayText":"Error: moveJoints command is missing required arguments.","message":"ERROR: moveJoints COMMAND IS MISSING REQUIRED ARGUMENTS"}')
 
                 case "callibrate":
                     # no argument, so cannot be malformed.
                     # just call calibrate
                     robot.calibrate_auto()
-                    websoc.send({"replyComm":"callibrate","result":"success","displayText":"Callibration Complete","message":"ARM CALLIBRATED"})
+                    await websoc.send('{"replyComm":"callibrate","result":"success","displayText":"Callibration Complete","message":"ARM CALLIBRATED"}')
                     
 
                 case "goHome":
                     # home position should always be safe, don't bother checking
                     movePose(homePose)
                     print("Moved Home")
-                    websoc.send({"replyComm":"goHome","result":"success","displayText":"Home Move Complete","message":"HOME MOVE COMPLETE"})
+                    await websoc.send('{"replyComm":"goHome","result":"success","displayText":"Home Move Complete","message":"HOME MOVE COMPLETE"}')
 
                 case "setGripper":
                     pass
@@ -267,43 +269,43 @@ async def dataHandler():
                         if (responseJSON["state"] == "open"):
                             robot.open_gripper()
                             gripperOpen = True
-                            websoc.send({"replyComm":"setGripper","result":"success","displayText":"Gripper Opened","message":"GRIPPER OPENED"})
+                            await websoc.send('{"replyComm":"setGripper","result":"success","displayText":"Gripper Opened","message":"GRIPPER OPENED"}')
 
 
                         elif (responseJSON["state"] == "close"):
                             robot.close_gripper()
                             gripperOpen = False
-                            websoc.send({"replyComm":"setGripper","result":"success","displayText":"Gripper Closed","message":"GRIPPER CLOSED"})
+                            await websoc.send('{"replyComm":"setGripper","result":"success","displayText":"Gripper Closed","message":"GRIPPER CLOSED"}')
 
                         elif (responseJSON["state"] == "toggle"):
                             if (gripperOpen):
                                 robot.close_gripper()
                                 gripperOpen = False
-                                websoc.send({"replyComm":"setGripper","result":"success","displayText":"Gripper Closed","message":"GRIPPER CLOSED"})
+                                await websoc.send('{"replyComm":"setGripper","result":"success","displayText":"Gripper Closed","message":"GRIPPER CLOSED"}')
                             else:
                                 robot.open_gripper()
                                 gripperOpen = True
-                                websoc.send({"replyComm":"setGripper","result":"success","displayText":"Gripper Opened","message":"GRIPPER OPENED"})
+                                await websoc.send('{"replyComm":"setGripper","result":"success","displayText":"Gripper Opened","message":"GRIPPER OPENED"}')
                         else:
                             # invalid state given. send fail message
                             print("ERROR: INVALID GRIPPER STATE RECIEVED: "+responseJSON)
-                            websoc.send({"replyComm":"setGripper","result":"fail","displayText":"Error: Invalid Gripper state","message":"INVALID GRIPPER STATE RECIEVED"})
+                            await websoc.send('{"replyComm":"setGripper","result":"fail","displayText":"Error: Invalid Gripper state","message":"INVALID GRIPPER STATE RECIEVED"}')
                     
                     except KeyError:
                         print("ERROR: RECIEVED MALFORMED setGripper: "+str(responseJSON))
-                        websoc.send({"replyComm":"setGripper","result":"fail","displayText":"Error: setGripper command is missing required arguments.","message":"ERROR: setGripper COMMAND IS MISSING REQUIRED ARGUMENTS"})
+                        await websoc.send('{"replyComm":"setGripper","result":"fail","displayText":"Error: setGripper command is missing required arguments.","message":"ERROR: setGripper COMMAND IS MISSING REQUIRED ARGUMENTS"}')
 
                 case "freeze":
                     # check for malformed message
                     try:
                         frozenTime =  int(datetime.datetime.now().timestamp()) + int(responseJSON["time"])
                         print("ARM FROZEN FOR "+str(int(responseJSON["time"]))+ "SECONDS")
-                        websoc.send({"replyComm":"freeze","result":"success","displayText":"Arm has been frozen","message":"ARM FROZEN UNTIL "+str(int(responseJSON["time"]))})
+                        await websoc.send('{"replyComm":"freeze","result":"success","displayText":"Arm has been frozen","message":"ARM FROZEN")}')
 
                         
                     except KeyError:
                         print("ERROR: RECIEVED MALFORMED freeze: "+str(responseJSON))
-                        websoc.send({"replyComm":"freeze","result":"fail","displayText":"Error: freeze command is missing required arguments.","message":"ERROR: freeze COMMAND IS MISSING REQUIRED ARGUMENTS"})
+                        await websoc.send('{"replyComm":"freeze","result":"fail","displayText":"Error: freeze command is missing required arguments.","message":"ERROR: freeze COMMAND IS MISSING REQUIRED ARGUMENTS"}')
 
             
             # TESTING
