@@ -159,7 +159,7 @@ async def dataHandler():
             #   if command is good, send to arm
             #   send success or fail message back to practable
 
-            response = websoc.recv()
+            await response = websoc.recv()
             print (response)# TESTING AND DEBUG
 
             # convert response from json to python dict
