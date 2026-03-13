@@ -1,0 +1,84 @@
+This file acts as documentation of the JSON used.
+
+========================================
+INCOMING MESSAGES (Practable -> python)
+========================================
+All incoming messages expect the "command" attribute.
+Its value determines the type of command the server executes.
+
+The below table describes each command type and their requirements
+---------------------------------------------------------------------------------------------------
+command value           required attributes             
+signal                  text                            
+
+Sends a text message to the server that is then printed in its console.
+This is usually used for debugging
+
+Example:
+{"command":"signal", "text":"this message will be printed to console"}
+-----------------------------------------------------------------------
+command value           required attributes             
+moveTCP                 x, y, z, roll, pitch, yaw       
+
+Requests the arm to go to the provided TCP configuration.
+The given values will be verified server side to be possible before the arm is moved.
+x/y/z are in mm, roll/pictch/yaw are in radians.
+
+Example:
+{"command":"moveTCP", "x":"25", "y":"15", "z":"10", "roll":"0.2", "pitch":"0.3", "yaw":"0"}
+---------------------------------------------------------------------------------------------------
+command value           required attributes             
+moveJoints              j0, j1, j2, j3, j4, j5          
+
+Verifies the given joint rotations server side, then moves the arm accordingly.
+All rotations are in radians.
+
+Example:
+{"command":"moveJoints", "j0":"0", "j1":"0.2", "j2":"0.3", "j3":"-0.1", "j4":"-0.2", "j5":"0.4"}
+---------------------------------------------------------------------------------------------------
+command value           required attributes             
+callibrate              None                            
+
+Instructs the arm to calibrate itself.
+Should only be used if needed, eg if the arm collides with something
+
+Example:
+{"command":"callibrate"}
+---------------------------------------------------------------------------------------------------
+command value           required attributes             
+goHome                  None                            
+
+Instructs the arm to go to its home position.
+Should be called at beggining and end of bookings.
+
+Example:
+{"command":"goHome"}
+---------------------------------------------------------------------------------------------------
+command value           required attributes             
+setGripper              state                           
+
+Sets the state of the gripper.
+Valid values are "open", "close", "toggle".
+"open" and "close" set the state, "toggle" sets to whatever state is not currently active
+---------------------------------------------------------------------------------------------------
+command value           required attributes             
+freeze                  time                            
+
+Freezes the position of the arm and automatically fails any commands recieved for a given time.
+Used to make the arm safe to interact with.
+Reply is send instantly, client must also start timer when reply recieved.
+Time is in ms
+
+Example:
+{"command":"freeze", "time":"60000"}
+---------------------------------------------------------------------------------------------------
+
+=======================================
+OUTGOING MESSAGES (python -> Practable)
+=======================================
+All outgoing messages must have the same attributes:
+
+replyCommand: The value of the command attribute of the message that caused this reply. "NOT_SET" if not present
+result: either "success" or "fail"
+displayText: text to display to the user. may be blank for acknoledgements and similar
+message: text to log. technical info for debugging/backend

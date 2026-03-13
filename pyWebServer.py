@@ -18,8 +18,8 @@ import websockets as ws
 from websockets.asyncio.client import connect as wsconnect
 
 import math
-
 import json
+import datetime
 
 # config variables
 # IP address for the robot
@@ -67,8 +67,20 @@ else:
 # calibrate arm
 robot.calibrate_auto()
 
+# save home pose now
+homePose = robot.get_pose()
+
+# open gripper and save state
+# it should be open anyway, but just to make sure
+robot.open_gripper()
+gripperOpen = True
+
+# need this to freeze the arm
+# if unix time is less than this, all commands will be rejected
+frozenTime = 0
+
 # arm related variables
-joints = robot.get_joints()
+# joints = robot.get_joints()
 
 # VERY important function.
 # returns whether the given pose is a valid (and SAFE) position.
@@ -102,6 +114,9 @@ def verifyJointposition(jointPos):
 def moveJointposition(jp):
     if (verifyJointposition(jp)):
         robot.move(jp)
+        return True
+    else:
+        return False
 
 
 # for conveinience. Just calls the above but takes degrees. might not be used outside of testing
@@ -113,6 +128,9 @@ def moveJointposition(jp):
 def movePose(p):
     if (verifyPose(p)):
         robot.move(p)
+        return True
+    else:
+        return False
 
 
 
@@ -147,12 +165,149 @@ async def dataHandler():
                 responseJSON = json.loads(response)
             except json.decoder.JSONDecodeError:
                 # command was bad json. send a reply stating as such
-                websoc.send({"message":"Error: Command was not valid JSON"})
+                websoc.send({"replyComm":"NOT_SET","result":"fail","displayText":"Error: Invalid command.","message":"ERROR: BAD JSON - FAILED TO DECODE"})
+                continue
 
             # we now have valid json. interperate it.
+            try:
+                command = responseJSON["command"]
+            except KeyError:
+                # command not present. reply with error
+                websoc.send({"replyComm":"NOT_SET","result":"fail","displayText":"Error: Invalid command.","message":"ERROR: COMMAND ATTRIBUTE NOT SET FOR RECIEVED COMMAND"})
+                continue
+
+            # check for frozen status
+            if (int(datetime.datetime.now().timestamp()) < frozenTime):
+                # arm is frozen, reject command and continue
+                websoc.send({"replyComm":command,"result":"fail","displayText":"Command rejected, the arm is currently frozen","message":"REJECTED COMMAND WHILE FROZEN"})
+                continue
+
+            # command variable set. interperate it
+            match command:
+                case "signal":
+                    # command could be malformed. check just to be safe
+                    try:
+                        print(responseJSON["text"])
+                        websoc.send({"replyComm":"signal","result":"success","displayText":"","message":"Signal wit text: "+responseJSON["text"]+" recieved successfully"})
+                        pass
+                    except KeyError:
+                        print("ERROR: RECIEVED MALFORMED SIGNAL: "+str(responseJSON))
+                        websoc.send({"replyComm":"NOT_SET","result":"fail","displayText":"Error: Invalid command.","message":"ERROR: COMMAND ATTRIBUTE NOT SET FOR RECIEVED COMMAND"})
+
+                case "moveTCP":
+                    # command could be malformed. check just to be safe
+                    try:
+                        # print to console
+                        print("Recieved moveTCP command: moving to:"
+                              +"\nx: "+responseJSON["x"]
+                              +"\ny: "+responseJSON["y"]
+                              +"\nz: "+responseJSON["z"]
+                              +"\nroll: "+responseJSON["roll"]
+                              +"\npitch: "+responseJSON["pitch"]
+                              +"\nyaw: "+responseJSON["yaw"]
+                              )
+                        # actually move
+                        # NOTE: given values are in cm not mm
+                        if (movePose(pn.PoseObject(float(responseJSON["x"]), float(responseJSON["y"]), float(responseJSON["z"]), float(responseJSON["roll"]), float(responseJSON["pitch"]), float(responseJSON["yaw"])))):
+                            # move completed successfully
+                            websoc.send({"replyComm":"moveTCP","result":"success","displayText":"Move Complete","message":"TCP MOVE COMPLETE"})
+                        else:
+                            # move failed
+                            websoc.send({"replyComm":"moveTCP","result":"fail","displayText":"Move Failed: Location Invalid","message":"TCP MOVE FAIL - INVALID LOCATION"})
+                    
+                    except KeyError:
+                        # malformed command
+                        print("ERROR: RECIEVED MALFORMED moveTCP: "+str(responseJSON))
+                        websoc.send({"replyComm":"moveTCP","result":"fail","displayText":"Error: moveTCP command is missing required arguments.","message":"ERROR: moveTCP COMMAND IS MISSING REQUIRED ARGUMENTS"})
+                
+                case "moveJoints":
+                    # command could be malformed. check just to be safe
+                    try:
+                        # print to console
+                        print("Recieved moveJoints command: moving to:"
+                              +"\nj0: "+responseJSON["j0"]
+                              +"\nj1: "+responseJSON["j1"]
+                              +"\nj2: "+responseJSON["j2"]
+                              +"\nj3: "+responseJSON["j3"]
+                              +"\nj4: "+responseJSON["j4"]
+                              +"\nj5: "+responseJSON["j5"]
+                              )
+                        # actually move
+                        # NOTE: given values are in cm not mm
+                        if (moveJointposition(pn.PoseObject(float(responseJSON["j0"]), float(responseJSON["j1"]), float(responseJSON["j2"]), float(responseJSON["j3"]), float(responseJSON["j4"]), float(responseJSON["j5"])))):
+                            # move completed successfully
+                            websoc.send({"replyComm":"moveJoints","result":"success","displayText":"Move Complete","message":"JOINTS MOVE COMPLETE"})
+                        else:
+                            # move failed
+                            websoc.send({"replyComm":"moveJoints","result":"fail","displayText":"Move Failed: Location Invalid","message":"JOINTS MOVE FAIL - INVALID LOCATION"})
+                    
+                    except KeyError:
+                        print("ERROR: RECIEVED MALFORMED moveJoints: "+str(responseJSON))
+                        websoc.send({"replyComm":"moveJoints","result":"fail","displayText":"Error: moveJoints command is missing required arguments.","message":"ERROR: moveJoints COMMAND IS MISSING REQUIRED ARGUMENTS"})
+
+                case "callibrate":
+                    # no argument, so cannot be malformed.
+                    # just call calibrate
+                    robot.calibrate_auto()
+                    websoc.send({"replyComm":"callibrate","result":"success","displayText":"Callibration Complete","message":"ARM CALLIBRATED"})
+                    
+
+                case "goHome":
+                    # home position should always be safe, don't bother checking
+                    movePose(homePose)
+                    print("Moved Home")
+                    websoc.send({"replyComm":"goHome","result":"success","displayText":"Home Move Complete","message":"HOME MOVE COMPLETE"})
+
+                case "setGripper":
+                    pass
+                    # command could be malformed, check just to be safe
+                    try:
+                        if (responseJSON["state"] == "open"):
+                            robot.open_gripper()
+                            gripperOpen = True
+                            websoc.send({"replyComm":"setGripper","result":"success","displayText":"Gripper Opened","message":"GRIPPER OPENED"})
+
+
+                        elif (responseJSON["state"] == "close"):
+                            robot.close_gripper()
+                            gripperOpen = False
+                            websoc.send({"replyComm":"setGripper","result":"success","displayText":"Gripper Closed","message":"GRIPPER CLOSED"})
+
+                        elif (responseJSON["state"] == "toggle"):
+                            if (gripperOpen):
+                                robot.close_gripper()
+                                gripperOpen = False
+                                websoc.send({"replyComm":"setGripper","result":"success","displayText":"Gripper Closed","message":"GRIPPER CLOSED"})
+                            else:
+                                robot.open_gripper()
+                                gripperOpen = True
+                                websoc.send({"replyComm":"setGripper","result":"success","displayText":"Gripper Opened","message":"GRIPPER OPENED"})
+                        else:
+                            # invalid state given. send fail message
+                            print("ERROR: INVALID GRIPPER STATE RECIEVED: "+responseJSON)
+                            websoc.send({"replyComm":"setGripper","result":"fail","displayText":"Error: Invalid Gripper state","message":"INVALID GRIPPER STATE RECIEVED"})
+                    
+                    except KeyError:
+                        print("ERROR: RECIEVED MALFORMED setGripper: "+str(responseJSON))
+                        websoc.send({"replyComm":"setGripper","result":"fail","displayText":"Error: setGripper command is missing required arguments.","message":"ERROR: setGripper COMMAND IS MISSING REQUIRED ARGUMENTS"})
+
+                case "freeze":
+                    # check for malformed message
+                    try:
+                        frozenTime =  int(datetime.datetime.now().timestamp()) + int(responseJSON["time"])
+                        print("ARM FROZEN FOR "+str(int(responseJSON["time"]))+ "SECONDS")
+                        websoc.send({"replyComm":"freeze","result":"success","displayText":"Arm has been frozen","message":"ARM FROZEN UNTIL "+str(int(responseJSON["time"]))})
+
+                        
+                    except KeyError:
+                        print("ERROR: RECIEVED MALFORMED freeze: "+str(responseJSON))
+                        websoc.send({"replyComm":"freeze","result":"fail","displayText":"Error: freeze command is missing required arguments.","message":"ERROR: freeze COMMAND IS MISSING REQUIRED ARGUMENTS"})
+
+            
             # TESTING
-            if (responseJSON["command"] == "rotateJoint"):
-                rotateJoint(int(responseJSON["joint"]),float(responseJSON["rad"]))
+            # if (responseJSON["command"] == "rotateJoint"):
+            #     rotateJoint(int(responseJSON["joint"]),float(responseJSON["rad"]))
+                
             
 
         
