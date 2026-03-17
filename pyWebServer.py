@@ -151,7 +151,7 @@ def verifyJointposition(jointPos):
 # NOTE: needs to have a try/catch for hostnotreachable in case it disconnects for some reason
 def moveJointposition(jp):
     if (verifyJointposition(jp)):
-        print("moveJointPosition: verify success for jp: "+jp)
+        print("moveJointPosition: verify success for jp: "+str(jp))
         robot.move(jp)
         return True
     else:
