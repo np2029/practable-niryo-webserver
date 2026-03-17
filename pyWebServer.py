@@ -71,8 +71,10 @@ else:
 # calibrate arm
 robot.calibrate_auto()
 
-# save home pose now
-homePose = robot.get_pose()
+# hard code home pose
+homePose = robot.forward_kinematics(pn.JointsPosition(0,0.5,-1.25,0,0,0))
+# also immediately move home
+robot.move(homePose)
 
 # open gripper and save state
 # it should be open anyway, but just to make sure
@@ -219,6 +221,7 @@ async def dataHandler():
             if (int(datetime.datetime.now().timestamp()) < frozenTime):
                 # arm is frozen, reject command and continue
                 await websoc.send('{"replyComm":command,"result":"fail","displayText":"Command rejected, the arm is currently frozen","message":"REJECTED COMMAND WHILE FROZEN"}')
+                print("RECIEVED COMMAND BUT ARM FROZEN")
                 continue
 
             # command variable set. interperate it
@@ -227,10 +230,7 @@ async def dataHandler():
                     # command could be malformed. check just to be safe
                     try:
                         print(responseJSON["text"])
-                        #print("BEFORE AWAIT")
                         await websoc.send('{"replyComm":"signal","result":"success","displayText":"","message":"Signal recieved successfully"}')
-                        #print("AFTER AWAIT")
-                        pass
                     except KeyError:
                         print("ERROR: RECIEVED MALFORMED SIGNAL: "+str(responseJSON))
                         await websoc.send('{"replyComm":"NOT_SET","result":"fail","displayText":"Error: Invalid command.","message":"ERROR: COMMAND ATTRIBUTE NOT SET FOR RECIEVED COMMAND"}')
@@ -252,9 +252,11 @@ async def dataHandler():
                         if (movePose(pn.PoseObject(float(responseJSON["x"]), float(responseJSON["y"]), float(responseJSON["z"]), float(responseJSON["roll"]), float(responseJSON["pitch"]), float(responseJSON["yaw"])))):
                             # move completed successfully
                             await websoc.send('{"replyComm":"moveTCP","result":"success","displayText":"Move Complete","message":"TCP MOVE COMPLETE"}')
+                            print("TCP move successful")
                         else:
                             # move failed
                             await websoc.send('{"replyComm":"moveTCP","result":"fail","displayText":"Move Failed: Location Invalid","message":"TCP MOVE FAIL - INVALID LOCATION"}')
+                            print("ERROR: TCP MOVE INVALID")
                     
                     except KeyError:
                         # malformed command
@@ -278,9 +280,11 @@ async def dataHandler():
                         if (moveJointposition(pn.PoseObject(float(responseJSON["j0"]), float(responseJSON["j1"]), float(responseJSON["j2"]), float(responseJSON["j3"]), float(responseJSON["j4"]), float(responseJSON["j5"])))):
                             # move completed successfully
                             await websoc.send('{"replyComm":"moveJoints","result":"success","displayText":"Move Complete","message":"JOINTS MOVE COMPLETE"}')
+                            print("Joints move Successful")
                         else:
                             # move failed
                             await websoc.send('{"replyComm":"moveJoints","result":"fail","displayText":"Move Failed: Location Invalid","message":"JOINTS MOVE FAIL - INVALID LOCATION"}')
+                            print("ERROR: JOINTS MOVE INVALID")
                     
                     except KeyError:
                         print("ERROR: RECIEVED MALFORMED moveJoints: "+str(responseJSON))
@@ -289,9 +293,10 @@ async def dataHandler():
                 case "callibrate":
                     # no argument, so cannot be malformed.
                     # just call calibrate
+                    print("Callibrating robot...")
                     robot.calibrate_auto()
                     await websoc.send('{"replyComm":"callibrate","result":"success","displayText":"Callibration Complete","message":"ARM CALLIBRATED"}')
-                    
+                    print("Callibration complete!")
 
                 case "goHome":
                     # home position should always be safe, don't bother checking
