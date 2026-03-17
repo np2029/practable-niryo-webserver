@@ -107,8 +107,8 @@ def verifyPose(pose):
 
     # precise check
     # 1: calculate bounds of the physical gripper from the tcp position
-    GRIPPER_WIDTH = 80# mm
-    GRIPPER_HEIGHT = 28# mm
+    GRIPPER_WIDTH = 0.08# meters, 80mm
+    GRIPPER_HEIGHT = 0.028# meters, 28mm
     gripperBounds = np.array([
         [0,GRIPPER_WIDTH/2,GRIPPER_HEIGHT/2],
         [0,-GRIPPER_WIDTH/2,GRIPPER_HEIGHT/2],
@@ -127,6 +127,8 @@ def verifyPose(pose):
         updatedBounds[i][2] += pose.z
 
     # 2: check the verts of the bounding box against the tcp limits
+    print("CHECKING BOUNDS: "+str(updatedBounds))
+    print("FOR POSE: "+str(pose))
     for i in range(len(updatedBounds)):
         if (updatedBounds[i][0] < TCP_LIMIT_LOWER_X
             or updatedBounds[i][0] > TCP_LIMIT_UPPER_X
