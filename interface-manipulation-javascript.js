@@ -214,16 +214,19 @@ function submitMove() {
     // need to convert to radians
     com = "{"+
     "\"command\":\"moveJoints\","
-    +"\"j0\":\"" + "\"" + slider0.sliderInput.value +"\","
-    +"\"j1\":\"" + "\"" + slider1.sliderInput.value +"\","
-    +"\"j2\":\"" + "\"" + slider2.sliderInput.value +"\","
-    +"\"j3\":\"" + "\"" + slider3.sliderInput.value +"\","
-    +"\"j4\":\"" + "\"" + slider4.sliderInput.value +"\","
-    +"\"j5\":\"" + "\"" + slider5.sliderInput.value +"\""
+    +"\"j0\":\"" + Math.PI/180*slider0.sliderInput.value +"\","
+    +"\"j1\":\"" + Math.PI/180*slider1.sliderInput.value +"\","
+    +"\"j2\":\"" + Math.PI/180*slider2.sliderInput.value +"\","
+    +"\"j3\":\"" + Math.PI/180*slider3.sliderInput.value +"\","
+    +"\"j4\":\"" + Math.PI/180*slider4.sliderInput.value +"\","
+    +"\"j5\":\"" + Math.PI/180*slider5.sliderInput.value +"\""
     +"}";
 
     // set form command input text to new command
     inputfield.value = com;
+
+    // have to dispach an input event. probably what links it in to the backend
+    inputfield.dispatchEvent(new Event('input'), {bubbles: true})
 
     // execute command
     sendButton.click();
