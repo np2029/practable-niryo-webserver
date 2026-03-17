@@ -165,7 +165,7 @@ const jointLimits = [
 ]
 
 // NOTE: this is in degrees and is NOT to be used as arguments to set the arm position
-const homePosition = [0,0,0,0,0,0] // CORRECT LATER
+const homePosition = [0,28.6,-71.6,0,0,0] // CORRECT LATER
 
 // create slider divs
 var slider0Div = document.createElement("div");
