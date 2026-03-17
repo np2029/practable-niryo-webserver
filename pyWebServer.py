@@ -150,6 +150,7 @@ def verifyJointposition(jointPos):
 # rotates the joints to the given jointposition
 # NOTE: needs to have a try/catch for hostnotreachable in case it disconnects for some reason
 def moveJointposition(jp):
+    print("moveJointPosition: attempting to verify jp: "+str(jp))
     if (verifyJointposition(jp)):
         print("moveJointPosition: verify success for jp: "+str(jp))
         robot.move(jp)
@@ -278,7 +279,7 @@ async def dataHandler():
                               )
                         # actually move
                         # NOTE: given values are in cm not mm
-                        if (moveJointposition(pn.PoseObject(float(responseJSON["j0"]), float(responseJSON["j1"]), float(responseJSON["j2"]), float(responseJSON["j3"]), float(responseJSON["j4"]), float(responseJSON["j5"])))):
+                        if (moveJointposition(pn.JointsPosition(float(responseJSON["j0"]), float(responseJSON["j1"]), float(responseJSON["j2"]), float(responseJSON["j3"]), float(responseJSON["j4"]), float(responseJSON["j5"])))):
                             # move completed successfully
                             await websoc.send('{"replyComm":"moveJoints","result":"success","displayText":"Move Complete","message":"JOINTS MOVE COMPLETE"}')
                             print("Joints move Successful")
