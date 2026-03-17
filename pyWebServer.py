@@ -21,8 +21,7 @@ import math
 import json
 import datetime
 import numpy as np
-# import scipy.spatial.transform as sp
-from scipy.spatial.transform import RigidTransform as Tf
+
 from scipy.spatial.transform import Rotation as R
 
 # config variables
