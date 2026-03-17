@@ -20,6 +20,10 @@ from websockets.asyncio.client import connect as wsconnect
 import math
 import json
 import datetime
+import numpy as np
+# import scipy.spatial.transform as sp
+from scipy.spatial.transform import RigidTransform as Tf
+from scipy.spatial.transform import Rotation as R
 
 # config variables
 # IP address for the robot
@@ -90,19 +94,51 @@ def verifyPose(pose):
     # return True # FOR TESTING
     # rough check
     # 1: check the pose x,y,z values against tcp limits
-    return (pose.x <= TCP_LIMIT_UPPER_X and 
-            pose.x >= TCP_LIMIT_LOWER_X and
+    # return (pose.x <= TCP_LIMIT_UPPER_X and 
+    #         pose.x >= TCP_LIMIT_LOWER_X and
 
-            pose.y <= TCP_LIMIT_UPPER_Y and
-            pose.y >= TCP_LIMIT_LOWER_Y and
+    #         pose.y <= TCP_LIMIT_UPPER_Y and
+    #         pose.y >= TCP_LIMIT_LOWER_Y and
 
-            pose.z <= TCP_LIMIT_UPPER_Z and
-            pose.z >= TCP_LIMIT_LOWER_Z
-            )
+    #         pose.z <= TCP_LIMIT_UPPER_Z and
+    #         pose.z >= TCP_LIMIT_LOWER_Z
+    #         )
 
     # precise check
     # 1: calculate bounds of the physical gripper from the tcp position
+    GRIPPER_WIDTH = 80# mm
+    GRIPPER_HEIGHT = 28# mm
+    gripperBounds = np.array([
+        [0,GRIPPER_WIDTH/2,GRIPPER_HEIGHT/2],
+        [0,-GRIPPER_WIDTH/2,GRIPPER_HEIGHT/2],
+        [0,-GRIPPER_WIDTH/2,-GRIPPER_HEIGHT/2],
+        [0,GRIPPER_WIDTH/2,-GRIPPER_HEIGHT/2]
+    ])
+
+    # apply roll, pitch, and yaw to bounds
+    rot =  R.from_euler("xyz", [pose.roll, pose.pitch, pose.yaw], degrees=False)
+    updatedBounds = rot.apply(gripperBounds)
+
+    # add tcp x,y,z as offsets to get real coords
+    for i in range(len(updatedBounds)):
+        updatedBounds[i][0] += pose.x
+        updatedBounds[i][1] += pose.y
+        updatedBounds[i][2] += pose.z
+
     # 2: check the verts of the bounding box against the tcp limits
+    for i in range(len(updatedBounds)):
+        if (updatedBounds[i][0] < TCP_LIMIT_LOWER_X
+            or updatedBounds[i][0] > TCP_LIMIT_UPPER_X
+
+            or updatedBounds[i][1] < TCP_LIMIT_LOWER_Y
+            or updatedBounds[i][1] > TCP_LIMIT_UPPER_Y
+
+            or updatedBounds[i][2] < TCP_LIMIT_LOWER_Z
+            or updatedBounds[i][2] > TCP_LIMIT_UPPER_Z
+            ):
+            return False
+        else:
+            return True
 
 # forward kinematics is fast. just feed it into the above
 def verifyJointposition(jointPos):
