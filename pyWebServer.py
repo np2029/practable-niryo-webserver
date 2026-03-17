@@ -202,7 +202,7 @@ async def dataHandler():
                 responseJSON = json.loads(response)
             except json.decoder.JSONDecodeError:
                 # command was bad json. send a reply stating as such
-                await websoc.send({"replyComm":"NOT_SET","result":"fail","displayText":"Error: Invalid command.","message":"ERROR: BAD JSON - FAILED TO DECODE"})
+                await websoc.send('{"replyComm":"NOT_SET","result":"fail","displayText":"Error: Invalid command.","message":"ERROR: BAD JSON - FAILED TO DECODE"}')
                 print("RECEIVED BAD COMMAND: "+response)
                 continue
 
@@ -211,14 +211,14 @@ async def dataHandler():
                 command = responseJSON["command"]
             except KeyError:
                 # command not present. reply with error
-                await websoc.send({"replyComm":"NOT_SET","result":"fail","displayText":"Error: Invalid command.","message":"ERROR: COMMAND ATTRIBUTE NOT SET FOR RECIEVED COMMAND"})
+                await websoc.send('{"replyComm":"NOT_SET","result":"fail","displayText":"Error: Invalid command.","message":"ERROR: COMMAND ATTRIBUTE NOT SET FOR RECIEVED COMMAND"}')
                 print("ERROR: COMMAND NOT SET IN INCOMING JSON: "+responseJSON)
                 continue
 
             # check for frozen status
             if (int(datetime.datetime.now().timestamp()) < frozenTime):
                 # arm is frozen, reject command and continue
-                await websoc.send({"replyComm":command,"result":"fail","displayText":"Command rejected, the arm is currently frozen","message":"REJECTED COMMAND WHILE FROZEN"})
+                await websoc.send('{"replyComm":command,"result":"fail","displayText":"Command rejected, the arm is currently frozen","message":"REJECTED COMMAND WHILE FROZEN"}')
                 continue
 
             # command variable set. interperate it
