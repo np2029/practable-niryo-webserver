@@ -207,6 +207,7 @@ sendButton.parentElement.parentElement.appendChild(realSubmitButton);
 realSubmitButton.style.position = "relative";
 realSubmitButton.style.top = "150px";
 realSubmitButton.style.height = "50px";
+realSubmitButton.style.right = "60px";
 
 // need a function to make a move. for now, just use moveJoints
 function submitMove() {
@@ -257,11 +258,48 @@ function goHome() {
     // set form command input text to goHome command
     inputfield.value = '{"command":"goHome"}';
 
+    // have to dispach an input event. probably what links it in to the backend
+    inputfield.dispatchEvent(new Event('input'), {bubbles: true})
+
+    // execute command
+    sendButton.click();
+}
+
+function toggleGripper() {
+    // simply send a setGripper command with state set to "toggle"
+    inputfield.value = '{"command":"setGripper", "state":"toggle"}';
+
+    // have to dispach an input event. probably what links it in to the backend
+    inputfield.dispatchEvent(new Event('input'), {bubbles: true})
+    
+    // execute command
+    sendButton.click();
+}
+
+// just-in-case, just send a command manually
+function debugSendCommand(commandString) {
+    inputfield.value = commandString;
+
+    // have to dispach an input event. probably what links it in to the backend
+    inputfield.dispatchEvent(new Event('input'), {bubbles: true})
+    
     // execute command
     sendButton.click();
 }
 
 // link submit button to real submit action
 realSubmitButton.addEventListener("click", submitMove)
+
+// we need a button for opening/closing the gripper
+var gripperButtonToggle = document.createElement("button");
+gripperButtonToggle.innerText = "Toggle Gripper";
+sendButton.parentElement.parentElement.appendChild(gripperButtonToggle);
+
+gripperButtonToggle.style.position = "relative";
+gripperButtonToggle.style.top = "150px";
+gripperButtonToggle.style.height = "50px";
+gripperButtonToggle.style.left = "60px";
+
+gripperButtonToggle.addEventListener("click",toggleGripper);
 
 // MAKE THE WINDOW FULLSCREEN!!! CAN'T DO THIS AUTOMATICALLY, JUST PRESS F11
