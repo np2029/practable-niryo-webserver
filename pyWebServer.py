@@ -139,8 +139,10 @@ def verifyPose(pose):
             or updatedBounds[i][2] < TCP_LIMIT_LOWER_Z
             or updatedBounds[i][2] > TCP_LIMIT_UPPER_Z
             ):
+            print("BOUNDS CHECK FAILED")
             return False
         else:
+            print("BOUNDS CHECK SUCCEEDED")
             return True
 
 # forward kinematics is fast. just feed it into the above
