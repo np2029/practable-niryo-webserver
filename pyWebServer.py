@@ -196,6 +196,7 @@ async def dataHandler():
     async with wsconnect(PRACTABLE_WEBSOCKET_ADDRESS) as websoc:
         # we will stop the loop via a user command or an error
         frozenTime = 0
+        gripperOpen = True
         while True:
             # when connected, things should always go as follows:
             #   recieve and interperate request from practable
