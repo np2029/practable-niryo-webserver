@@ -211,7 +211,7 @@ async def dataHandler():
             except json.decoder.JSONDecodeError:
                 # command was bad json. send a reply stating as such
                 await websoc.send('{"replyComm":"NOT_SET","result":"fail","displayText":"Error: Invalid command.","message":"ERROR: BAD JSON - FAILED TO DECODE"}')
-                print("RECEIVED BAD COMMAND: "+response)
+                print("RECEIVED BAD COMMAND: "+str(response))
                 continue
 
             # we now have valid json. interperate it.
@@ -220,7 +220,7 @@ async def dataHandler():
             except KeyError:
                 # command not present. reply with error
                 await websoc.send('{"replyComm":"NOT_SET","result":"fail","displayText":"Error: Invalid command.","message":"ERROR: COMMAND ATTRIBUTE NOT SET FOR RECIEVED COMMAND"}')
-                print("ERROR: COMMAND NOT SET IN INCOMING JSON: "+responseJSON)
+                print("ERROR: COMMAND NOT SET IN INCOMING JSON: "+str(responseJSON))
                 continue
 
             # check for frozen status
