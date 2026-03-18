@@ -9,9 +9,13 @@
 // get and remove uncessesary elements
 document.getElementById("stream-information").parentElement.remove();
 document.getElementById("show-config-file").parentElement.remove();
-document.getElementById("show-data").parentElement.remove();
+// document.getElementById("show-data").parentElement.remove();
 document.getElementById("clear-button").remove();
 document.getElementById("second-row").remove();
+
+// datafeed capture intermission
+dataFeed = document.getElementById("show-data");
+dataFeed.parentElement.style.display = "none";
 
 // resize the row we need
 document.getElementById("first-row").style.height = "90dvh";
@@ -205,7 +209,7 @@ realSubmitButton.innerText = "Send Move";
 sendButton.parentElement.parentElement.appendChild(realSubmitButton);
 
 realSubmitButton.style.position = "relative";
-realSubmitButton.style.top = "150px";
+realSubmitButton.style.top = "160px";
 realSubmitButton.style.height = "50px";
 realSubmitButton.style.right = "60px";
 
@@ -296,10 +300,47 @@ gripperButtonToggle.innerText = "Toggle Gripper";
 sendButton.parentElement.parentElement.appendChild(gripperButtonToggle);
 
 gripperButtonToggle.style.position = "relative";
-gripperButtonToggle.style.top = "150px";
+gripperButtonToggle.style.top = "160px";
 gripperButtonToggle.style.height = "50px";
 gripperButtonToggle.style.left = "60px";
 
 gripperButtonToggle.addEventListener("click",toggleGripper);
+
+
+// even more bodge!
+// bodge a textbox into the video feed area that will display the result of the last command
+
+// shrink the video feed to make room
+document.getElementById("video-canvas").style.width = "50dvw";
+
+// add the new p tag
+var commandResult = document.createElement("p");
+document.getElementById("video-canvas").parentElement.appendChild(commandResult);
+commandResult.innerText = "\nCommand Result:"
+commandResult.style.fontSize = "30px";
+
+// remove "recieved data" row of dataFeed
+dataFeed.children[0].remove()
+
+// function to change the previous command result text
+function updateCommandText() {
+    // check if anything even returned
+    if (dataFeed.childElementCount == 0) {
+        // do nothing, no children left
+        console.log("NO CHILDREN")
+        return;
+    }
+    // assume at least one child past here
+    // get child text
+    var temp = dataFeed.children[0].innerText;
+    temp.replaceAll("\n","");
+    commandResult.innerText = "\nCommand Result:\n" + JSON.parse(temp).displayText;
+    dataFeed.children[0].remove()
+    
+}
+
+// this is the worst part of this entire bodge
+// set an interval to update the command text 5 times per second
+const commandInterval = setInterval(updateCommandText,200);
 
 // MAKE THE WINDOW FULLSCREEN!!! CAN'T DO THIS AUTOMATICALLY, JUST PRESS F11
