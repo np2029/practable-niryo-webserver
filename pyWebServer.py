@@ -141,9 +141,9 @@ def verifyPose(pose):
             ):
             print("BOUNDS CHECK FAILED")
             return False
-        else:
-            print("BOUNDS CHECK SUCCEEDED")
-            return True
+    # for loop ended, NOW we can call success
+    print("BOUNDS CHECK SUCCEEDED")
+    return True
 
 # forward kinematics is fast. just feed it into the above
 def verifyJointposition(jointPos):
