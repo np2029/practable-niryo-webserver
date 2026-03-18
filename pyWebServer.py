@@ -38,14 +38,14 @@ PRACTABLE_WEBSOCKET_ADDRESS = "ws://localhost:8888/ws/data" # TODO: this is a gu
 
 # TCP limits
 # TODO: verify units
-TCP_LIMIT_UPPER_X = 490
-TCP_LIMIT_LOWER_X = -490
+TCP_LIMIT_UPPER_X = 0.490
+TCP_LIMIT_LOWER_X = -0.490
 
-TCP_LIMIT_UPPER_Y = 490
-TCP_LIMIT_LOWER_Y = -490
+TCP_LIMIT_UPPER_Y = 0.490
+TCP_LIMIT_LOWER_Y = -0.490
 
-TCP_LIMIT_UPPER_Z = 490
-TCP_LIMIT_LOWER_Z = 10      # NOTE: 0 is barely safe on the table, limiting to 10 for safety buffer
+TCP_LIMIT_UPPER_Z = 0.490
+TCP_LIMIT_LOWER_Z = 0.005      # NOTE: 0 is barely safe on the table, limiting to 5 for safety buffer
 
 # code begins here
 
