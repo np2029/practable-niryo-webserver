@@ -45,7 +45,7 @@ TCP_LIMIT_UPPER_Y = 0.490
 TCP_LIMIT_LOWER_Y = -0.490
 
 TCP_LIMIT_UPPER_Z = 0.490
-TCP_LIMIT_LOWER_Z = 0.005      # NOTE: 0 is barely safe on the table, limiting to 5 for safety buffer
+TCP_LIMIT_LOWER_Z = 0.0005      # NOTE: 0 is barely safe on the table, limiting to 0.5 for safety buffer
 
 # code begins here
 
