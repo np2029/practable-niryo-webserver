@@ -324,18 +324,18 @@ dataFeed.children[0].remove()
 
 // function to change the previous command result text
 function updateCommandText() {
-    // check if anything even returned
+    // // check if anything even returned
     if (dataFeed.childElementCount == 0) {
         // do nothing, no children left
         console.log("NO CHILDREN")
         return;
     }
-    // assume at least one child past here
-    // get child text
-    var temp = dataFeed.children[0].innerText;
+
+    // the data feed only stores the last 10 entries, deleting them seems to mess with this logic.
+    // read from them instead and just dont check if its a new one
+    var temp = dataFeed.children[dataFeed.childElementCount-1].innerText;
     temp.replaceAll("\n","");
     commandResult.innerText = "\nCommand Result:\n" + JSON.parse(temp).displayText;
-    dataFeed.children[0].remove()
     
 }
 
