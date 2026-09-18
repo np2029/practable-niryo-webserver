@@ -387,6 +387,7 @@ def armThreadFunction():
     try:
         # this needs aditional safety stuff, but I need to test it for now
         bufferedCommand = None
+        armThreadInit.set()
         while True:
             command = COMMAND_QUEUE.get()
 
@@ -404,6 +405,8 @@ def armThreadFunction():
 armThreadInit = threading.Event()
 armThread = threading.Thread(target=armThreadFunction, args=[])
 armThreadInit.wait()
+
+print("----- ARM THREAD INITIALISATION COMPLETE -----")
 
 # need to do SOMETHING with the main thread, otherwise we just instantly close
 while True:
