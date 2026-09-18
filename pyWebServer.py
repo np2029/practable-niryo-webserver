@@ -273,7 +273,7 @@ def practableThreadFunction():
                     # message verification
                     # check if json is valid
                     try:
-                        messageJSON = json.loads(messageJSON)
+                        messageJSON = json.loads(incoming)
                     except json.decoder.JSONDecodeError:
                         # command was bad json. send a reply stating as such
                         practable_ws.send('{"replyComm":"NOT_SET","result":"fail","displayText":"Error: Invalid command.","message":"ERROR: BAD JSON - FAILED TO DECODE"}')
@@ -298,12 +298,12 @@ def practableThreadFunction():
                     for i in messageJSON:
                         if i != "command":
                             try:
-                                typeCorrectArgs[i] = VALID_COMMANDS[i](messageJSON[i])
+                                typeCorrectArgs[i] = VALID_COMMANDS[messageJSON["command"]][i](messageJSON[i])
                             except:
                                 # type mismatch, invalid command
                                 practable_ws.send('{"replyComm":"NOT_SET","result":"fail","displayText":"Error: Invalid command.","message":"ERROR: ARGUMENT TYPE MISMATCH: "'+str(messageJSON[i])+' IS NOT TYPE '+str(VALID_COMMANDS[messageJSON["command"]][i])+'}')
                                 print(f"{CS_P}ERROR: COMMAND TYPE MISMATCH: {messageJSON[i]} IS NOT TYPE {VALID_COMMANDS[messageJSON["command"]][i]}")
-                                continue
+                                break
 
                     # need to check again, previous continue just breaks the arg check loop
                     if len(typeCorrectArgs) != len(messageJSON)-1:  # -1 to account for missing "command"
@@ -317,13 +317,15 @@ def practableThreadFunction():
                         case "move_jp":
                             pass
                             COMMAND_QUEUE.put(
-                                (robot.move, 
-                                 messageJSON["j0"],
-                                 messageJSON["j1"],
-                                 messageJSON["j2"],
-                                 messageJSON["j3"],
-                                 messageJSON["j4"],
-                                 messageJSON["j5"]
+                                (robot.move,
+                                [pn.JointsPosition( 
+                                     typeCorrectArgs["j0"],
+                                     typeCorrectArgs["j1"],
+                                     typeCorrectArgs["j2"],
+                                     typeCorrectArgs["j3"],
+                                     typeCorrectArgs["j4"],
+                                     typeCorrectArgs["j5"]
+                                 )]
                                  )
                             )
                             practable_ws.send('{"replyComm":"moveJoints","result":"success","displayText":"Move Complete","message":"JOINTS MOVE COMPLETE"}')
@@ -364,6 +366,7 @@ def practableThreadFunction():
 
             except Exception as e:
                 # TODO: handle/log/display errors
+                print(f"{CS_P}ERROR: PRACTABLE THREAD ENCOUNTERED AN EXCEPTION: {e}")
                 pass
 
             finally:
@@ -396,8 +399,9 @@ def armThreadFunction():
             print(f"{CS_A}executing command: {command}")
             command[0](*command[1])
 
-    except:
+    except Exception as e:
         # TODO: handle/log/display errors
+        print(f"{CS_A}ERROR: ARM THREAD ENCOUNTERED AN EXCEPTION: {e}")
         pass
 
     finally:
