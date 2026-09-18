@@ -327,6 +327,7 @@ def practableThreadFunction():
                                  messageJSON["j5"]
                                  )
                             )
+                            practable_ws.send('{"replyComm":"moveJoints","result":"success","displayText":"Move Complete","message":"JOINTS MOVE COMPLETE"}')
 
                         case "update_jog_tcp":
                             pass
