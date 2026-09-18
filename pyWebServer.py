@@ -310,7 +310,6 @@ def practableThreadFunction():
                         continue
 
                     # NOW we have a 100% valid command and args. we can finally submit the command
-                    COMMAND_QUEUE.put()
                     match messageJSON["command"]:
                         case "move_tcp":
                             pass
