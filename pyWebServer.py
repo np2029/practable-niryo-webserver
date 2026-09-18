@@ -379,6 +379,7 @@ def practableThreadFunction():
 
 pthreadInit = threading.Event()
 practableThread = threading.Thread(target=practableThreadFunction, args=[])
+practableThread.start()
 pthreadInit.wait()
 print("----- PRACTABLE THREAD INITIALISATION COMPLETE -----")
 print("----- ARM THREAD INITIALISATION BEGINING -----")
@@ -404,6 +405,7 @@ def armThreadFunction():
 
 armThreadInit = threading.Event()
 armThread = threading.Thread(target=armThreadFunction, args=[])
+armThread.start()
 armThreadInit.wait()
 
 print("----- ARM THREAD INITIALISATION COMPLETE -----")
