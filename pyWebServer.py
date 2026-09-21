@@ -91,7 +91,10 @@ VALID_COMMANDS = {
     "gripper_close":{},
     "gripper_toggle":{},
     "gripper_control":{
-        "ammount":int
+        "position":int,
+        "speed":int,
+        "max_torque":int,
+        "hold_torque":int
     },
     "signal":{
         "text":str
@@ -119,15 +122,16 @@ COMMAND_QUEUE = queue.Queue()
 def verifyPosition(position):
     # check type of pos.
     # make a new object to not mutate the supplied one
-    if type(position) == type(pn.JointsPosition):
+    if type(position) == pn.JointsPosition:
         pos = robot.forward_kinematics(position)
-    elif type(position) != type(pn.PoseObject):
+    elif type(position) == pn.PoseObject:
+        pos = position
+    else:
         # incorrect object given
-        raise TypeError(f"unsupported type {type(pos)} for verifyPosition")
+        raise TypeError(f"unsupported type {type(position)} for verifyPosition")
 
-    pos = position
     # must be correct type past this point
-
+    print("verifyPosition: GOT PASSED TYPE CHECK")
     # 1: calculate bounds of the physical gripper from the tcp position
     GRIPPER_WIDTH = 0.08# meters, 80mm
     GRIPPER_HEIGHT = 0.028# meters, 28mm
@@ -174,6 +178,7 @@ def safeMove(pos):
         print(f"safeMove: verifying move to\n{pos}")
         if verifyPosition(pos):
             print(f"safeMove: move verified, moving to {pos}")
+            robot.move(pos)
             return True
         else:
             print(f"safeMove: Move to position {pos} unsafe, discarded")
@@ -369,7 +374,7 @@ def practableThreadFunction():
                             practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
 
                         case "gripper_control":
-                            COMMAND_QUEUE.put("gripper_control", typeCorrectArgs)
+                            COMMAND_QUEUE.put(("gripper_control", typeCorrectArgs))
 
                         case "signal":
                             # dont do anything with the command queue, just print to console and log
@@ -380,8 +385,8 @@ def practableThreadFunction():
                             COMMAND_QUEUE.put(("calibrate",None))
                             practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
 
-                        case "gohome":
-                            COMMAND_QUEUE.put(("gohome",None))
+                        case "go_home":
+                            COMMAND_QUEUE.put(("go_home",None))
                             practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
 
                         # this should never trigger, should be filtered out by above. check anyway
@@ -474,11 +479,11 @@ def armThreadFunction():
                 case "calibrate":
                     robot.calibrate_auto()
 
-                case "gohome":
+                case "go_home":
                     # use the saved home pose so it works when the user changes it
                     # still need to check it's safe,
                     # otherwise users could use an unsafe home pose to bypass the checks
-                    safeMove(robot.get_home_pose)
+                    safeMove(robot.get_home_pose())
             # command[0](*command[1])
 
     except Exception as e:
