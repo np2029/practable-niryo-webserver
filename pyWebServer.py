@@ -48,11 +48,11 @@ TCP_LIMIT_LOWER_Z = 0.0005 # 0 is barely safe on a flat table. Recomend >= 0.000
 
 # callsigns for the different threads. Prepend these to every print
 # master thread
-CS_M = "M_ "
+CS_M = "M > "
 # practable thread
-CS_P = "P_ "
+CS_P = "P > "
 # arm thread
-CS_A = "A_ "
+CS_A = "A > "
 
 VALID_COMMANDS = {
     "move_tcp":{
@@ -240,28 +240,32 @@ gripperOpen = True # annoyingly, we need this variable
 
 print("----- ARM INITIALISATION COMPLETE -----")
 
+
+print("----- PRACTALBE CONNECTION INITIALISATION BEGINING -----")
+practable_ws = None
+print(f"{CS_M}Attempting to connect to {PRACTABLE_WEBSOCKET_ADDRESS}")
+for i in range(NO_CONNECTION_ATTEMPTS_PRACTABLE):
+    try:
+        practable_ws = connect(PRACTABLE_WEBSOCKET_ADDRESS)
+        # if we get here we have a connection.
+        break
+
+    except Exception as e:
+        print(f"{CS_P}Failed attempt {i} at connecting to {PRACTABLE_WEBSOCKET_ADDRESS}")
+
+print("----- PRACTALBE CONNECTION INITIALISATION COMPLETE -----")
+
 print("----- PRACTABLE THREAD INITIALISATION BEGINING -----")
 
 def practableThreadFunction():
-    practable_ws = None
     # need to wrap in try/catch so finally always happens
-    try:
-        print(f"{CS_P}Attempting to connect to {PRACTABLE_WEBSOCKET_ADDRESS}")
-        for i in range(NO_CONNECTION_ATTEMPTS_PRACTABLE):
-            try:
-                practable_ws = connect(PRACTABLE_WEBSOCKET_ADDRESS)
-                # if we get here we have a connection.
-                pthreadInit.set()
-                break
-
-            except Exception as e:
-                print(f"{CS_P}Failed attempt {i} at connecting to {PRACTABLE_WEBSOCKET_ADDRESS}")
-            
-        # test connection success
+    try:    
+        # test connection
         if practable_ws is None:
             raise Exception(f"{CS_P}failed {NO_CONNECTION_ATTEMPTS_PRACTABLE} connection attempts. exiting.")
         else:
             # we have a valid (for now) connection. lets use it
+            pthreadInit.set()
             try:
                 # main loop. 
                 # might need to add an interrupt feature/variable later
@@ -309,53 +313,76 @@ def practableThreadFunction():
                     if len(typeCorrectArgs) != len(messageJSON)-1:  # -1 to account for missing "command"
                         continue
 
-                    # NOW we have a 100% valid command and args. we can finally submit the command
+                    # now that we have a 100% valid command and args, we can do any final pre-processing
                     match messageJSON["command"]:
+                        # these commands need little/no pre-processing and can be put directly in the queue
+                        # each command needs a case so that the acknoledgements can be personalised
                         case "move_tcp":
-                            pass
+                            COMMAND_QUEUE.put(
+                                ("move_tcp",
+                                pn.PoseObject(
+                                    typeCorrectArgs["x"],
+                                    typeCorrectArgs["y"],
+                                    typeCorrectArgs["z"],
+                                    typeCorrectArgs["roll"],
+                                    typeCorrectArgs["pitch"],
+                                    typeCorrectArgs["yaw"],
+                                )
+                                )
+                            )
+                            practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
 
                         case "move_jp":
-                            pass
                             COMMAND_QUEUE.put(
-                                (robot.move,
-                                [pn.JointsPosition( 
+                                ("move_jp",
+                                pn.JointsPosition( 
                                      typeCorrectArgs["j0"],
                                      typeCorrectArgs["j1"],
                                      typeCorrectArgs["j2"],
                                      typeCorrectArgs["j3"],
                                      typeCorrectArgs["j4"],
                                      typeCorrectArgs["j5"]
-                                 )]
+                                 )
                                  )
                             )
-                            practable_ws.send('{"replyComm":"moveJoints","result":"success","displayText":"Move Complete","message":"JOINTS MOVE COMPLETE"}')
+                            practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
 
+                        # these two need their own thing, implement last
+                        # ======================
                         case "update_jog_tcp":
                             pass
 
                         case "update_jog_jp":
                             pass
+                        # ======================
 
                         case "gripper_open":
-                            pass
+                            COMMAND_QUEUE.put(("gripper_open",None))
+                            practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
 
                         case "gripper_close":
-                            pass
-
+                            COMMAND_QUEUE.put(("gripper_close",None))
+                            practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
+                            
                         case "gripper_toggle":
-                            pass
+                            COMMAND_QUEUE.put(("gripper_toggle",None))
+                            practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
 
                         case "gripper_control":
-                            pass
+                            COMMAND_QUEUE.put("gripper_control", typeCorrectArgs)
 
                         case "signal":
-                            pass
+                            # dont do anything with the command queue, just print to console and log
+                            print(f"{CS_P}Signal Recieved: {typeCorrectArgs["text"]}")
+                            practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
 
                         case "calibrate":
-                            pass
+                            COMMAND_QUEUE.put(("calibrate",None))
+                            practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
 
                         case "gohome":
-                            pass
+                            COMMAND_QUEUE.put(("gohome",None))
+                            practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
 
                         # this should never trigger, should be filtered out by above. check anyway
                         case _:
@@ -366,6 +393,7 @@ def practableThreadFunction():
 
             except Exception as e:
                 # TODO: handle/log/display errors
+                # NOTE: an exception always happens when the connection is closed, catch it seperately
                 print(f"{CS_P}ERROR: PRACTABLE THREAD ENCOUNTERED AN EXCEPTION: {e}")
                 pass
 
@@ -396,8 +424,62 @@ def armThreadFunction():
             command = COMMAND_QUEUE.get()
 
             # execute command. implement fully later
+            (com, args) = command
             print(f"{CS_A}executing command: {command}")
-            command[0](*command[1])
+            # practable_ws.send(f'{{""}}')  # send to signify a command has started execution
+            match com:
+                case "move_tcp":
+                    safeMove(args)
+
+                case "move_jp":
+                    safeMove(args)
+
+                # these two need their own thing, implement last
+                # ======================
+                case "update_jog_tcp":
+                    pass
+
+                case "update_jog_jp":
+                    pass
+                # ======================
+
+                case "gripper_open":
+                    robot.open_gripper()
+                    gripperOpen = True
+
+                case "gripper_close":
+                    robot.close_gripper()
+                    gripperOpen = False
+
+                case "gripper_toggle":
+                    if gripperOpen == None:
+                        # could assign default, for now just do nothing
+                        pass
+                    elif gripperOpen:
+                        robot.close_gripper()
+                        gripperOpen = False
+                    else:
+                        robot.open_gripper()
+                        gripperOpen = True
+
+                case "gripper_control":
+                    robot.control_gripper(
+                        args["position"],
+                        args["speed"],
+                        args["max_torque"],
+                        args["hold_torque"]
+                    )
+                    gripperOpen = None
+
+                case "calibrate":
+                    robot.calibrate_auto()
+
+                case "gohome":
+                    # use the saved home pose so it works when the user changes it
+                    # still need to check it's safe,
+                    # otherwise users could use an unsafe home pose to bypass the checks
+                    safeMove(robot.get_home_pose)
+            # command[0](*command[1])
 
     except Exception as e:
         # TODO: handle/log/display errors
