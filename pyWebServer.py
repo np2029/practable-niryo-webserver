@@ -355,10 +355,34 @@ def practableThreadFunction():
                         # these two need their own thing, implement last
                         # ======================
                         case "update_jog_tcp":
-                            pass
+                            COMMAND_QUEUE.put(
+                                ("update_jog_tcp",
+                                pn.PoseObject(
+                                    typeCorrectArgs["x"],
+                                    typeCorrectArgs["y"],
+                                    typeCorrectArgs["z"],
+                                    typeCorrectArgs["roll"],
+                                    typeCorrectArgs["pitch"],
+                                    typeCorrectArgs["yaw"]
+                                )
+                                )
+                            )
+                            practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
 
                         case "update_jog_jp":
-                            pass
+                            COMMAND_QUEUE.put(
+                                ("update_jog_jp",
+                                pn.JointsPosition( 
+                                        typeCorrectArgs["j0"],
+                                        typeCorrectArgs["j1"],
+                                        typeCorrectArgs["j2"],
+                                        typeCorrectArgs["j3"],
+                                        typeCorrectArgs["j4"],
+                                        typeCorrectArgs["j5"]
+                                    )
+                                    )
+                            )
+                            practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
                         # ======================
 
                         case "gripper_open":
@@ -426,7 +450,11 @@ def armThreadFunction():
         bufferedCommand = None
         armThreadInit.set()
         while True:
-            command = COMMAND_QUEUE.get()
+            if bufferedCommand is None:
+                command = COMMAND_QUEUE.get()
+            else:
+                command = bufferedCommand
+                bufferedCommand = None
 
             # execute command. implement fully later
             (com, args) = command
@@ -442,10 +470,82 @@ def armThreadFunction():
                 # these two need their own thing, implement last
                 # ======================
                 case "update_jog_tcp":
-                    pass
+                    # initial setup
+                    target = args
+                    difference = [0,0,0,0,0,0]
+                    atTarget = False
+
+                    while True:
+                        current = robot.get_pose()
+
+                        # check for updates to the target
+                        if COMMAND_QUEUE.queue > 0 and bufferedCommand is None:
+                            update = COMMAND_QUEUE.get()
+                            if update[0] == "update_jog_tcp":
+                                target = update[1]
+                            else:
+                                bufferedCommand = update
+
+                        # calculate difference
+                        for i in range(6):
+                            difference[i] = target[i] - current[i]
+
+                        # check if at target
+                        atTarget = True
+                        for i in difference:
+                            if abs(i) > 0.001:  # epsilon value in meters
+                                atTarget = False
+                                break
+
+                        # actually break the loop if at target 
+                        if atTarget:
+                            break
+
+                        # otherwise, move towards it
+                        robot.jog(pn.PoseObject(*difference))
+
+                        # sleep to not strangle the arm connection
+                        sleep(0.2)
+
+
 
                 case "update_jog_jp":
-                    pass
+                    # initial setup
+                    target = args
+                    difference = [0,0,0,0,0,0]
+                    atTarget = False
+
+                    while True:
+                        current = robot.get_joints()
+
+                        # check for updates to the target
+                        if COMMAND_QUEUE.queue > 0 and bufferedCommand is None:
+                            update = COMMAND_QUEUE.get()
+                            if update[0] == "update_jog_jp":
+                                target = update[1]
+                            else:
+                                bufferedCommand = update
+
+                        # calculate difference
+                        for i in range(6):
+                            difference[i] = target[i] - current[i]
+
+                        # check if at target
+                        atTarget = True
+                        for i in difference:
+                            if abs(i) > 0.00001:  # epsilon value in radians
+                                atTarget = False
+                                break
+
+                        # actually break the loop if at target 
+                        if atTarget:
+                            break
+
+                        # otherwise, move towards it
+                        robot.jog(pn.JointsPosition(*difference))
+
+                        # sleep to not strangle the arm connection
+                        sleep(0.2)
                 # ======================
 
                 case "gripper_open":
