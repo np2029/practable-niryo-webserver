@@ -9,6 +9,8 @@
 import json
 import datetime
 import queue
+import time
+import math
 
 from time import sleep
 
@@ -510,42 +512,86 @@ def armThreadFunction():
 
 
                 case "update_jog_jp":
-                    # initial setup
-                    target = args
-                    difference = [0,0,0,0,0,0]
-                    atTarget = False
-
+                    final = args[0:6]
+                    targets = robot.get_joints()[0:6]  # current angle set as default for safety reasons
+                    timeout = 0
                     while True:
-                        current = robot.get_joints()
+                        # main block
+                        angles = robot.get_joints()[0:6]
+                        jog = [0,0,0,0,0,0]
 
                         # check for updates to the target
-                        if COMMAND_QUEUE.queue > 0 and bufferedCommand is None:
+                        if COMMAND_QUEUE.qsize() > 0 and bufferedCommand is None:
                             update = COMMAND_QUEUE.get()
                             if update[0] == "update_jog_jp":
-                                target = update[1]
+                                final = update[1][0:6]
                             else:
                                 bufferedCommand = update
-
-                        # calculate difference
+            
+                        # find remaining angles for all joints
+                        remaining = [0,0,0,0,0,0]
                         for i in range(6):
-                            difference[i] = target[i] - current[i]
-
-                        # check if at target
-                        atTarget = True
-                        for i in difference:
-                            if abs(i) > 0.00001:  # epsilon value in radians
-                                atTarget = False
-                                break
-
-                        # actually break the loop if at target 
-                        if atTarget:
+                            remaining[i] = final[i] - angles[i]
+            
+                        # check if at final destination
+                        if np.all(list(map((lambda x: abs(x) <= 0.01), remaining))):
+                            # print("REACHED")
                             break
+            
+                        # check if all joints at targets yet, assigning new ones and jogging if so
+                        if np.all(list(map((lambda x, y: abs(x-y) <= 0.01), angles, targets))) or time.time() > timeout:
+                            for i in range(6):
+                                if abs(remaining[i]) > 0.001:
+                                    jog[i] = math.copysign(min(abs(remaining[i]), 0.2), remaining[i])
+                                    targets[i] += jog[i]
+                            # print(f"NEW TARGETS: {targets}")
+                            # print(f"JOGGING: {jog}")
+                            robot.jog(pn.JointsPosition(*jog))
+                            timeout = time.time()+1
+            
+                    sleep(0.2)
+                    # print(f"FINAL LOCATION: {robot.get_joints()[0]}")
 
-                        # otherwise, move towards it
-                        robot.jog(pn.JointsPosition(*difference))
 
-                        # sleep to not strangle the arm connection
-                        sleep(0.2)
+
+
+
+                    # # initial setup
+                    # target = args
+                    # difference = [0,0,0,0,0,0]
+                    # atTarget = False
+
+                    # while True:
+                    #     current = robot.get_joints()
+
+                    #     # check for updates to the target
+                    #     if COMMAND_QUEUE.queue > 0 and bufferedCommand is None:
+                    #         update = COMMAND_QUEUE.get()
+                    #         if update[0] == "update_jog_jp":
+                    #             target = update[1]
+                    #         else:
+                    #             bufferedCommand = update
+
+                    #     # calculate difference
+                    #     for i in range(6):
+                    #         difference[i] = target[i] - current[i]
+
+                    #     # check if at target
+                    #     atTarget = True
+                    #     for i in difference:
+                    #         if abs(i) > 0.00001:  # epsilon value in radians
+                    #             atTarget = False
+                    #             break
+
+                    #     # actually break the loop if at target 
+                    #     if atTarget:
+                    #         break
+
+                    #     # otherwise, move towards it
+                    #     robot.jog(pn.JointsPosition(*difference))
+
+                    #     # sleep to not strangle the arm connection
+                    #     sleep(0.2)
                 # ======================
 
                 case "gripper_open":
