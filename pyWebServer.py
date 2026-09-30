@@ -18,6 +18,7 @@ import pyniryo as pn  # I appologise an advance for the confusion this will caus
 import numpy as np
 import threading
 
+import websockets
 from websockets.sync.client import connect
 from scipy.spatial.transform import Rotation as R
 
@@ -113,7 +114,23 @@ VALID_COMMANDS = {
     }
 }
 
+# global command queue
 COMMAND_QUEUE = queue.Queue()
+
+# Threading Events:
+# events used in thread initialisation
+armThreadInit = threading.Event()
+pthreadInit = threading.Event()
+
+# used for testing if the arm is hanging on its connection step
+armConnectionHangTestEvent = threading.Event()
+
+# event used in the master thread loop
+masterThreadEvent = threading.Event()
+
+# event used to flag the practable thread isn't working
+# used when sending messages
+practableErrorEvent = threading.Event()
 
 # ===========
 # | CLASSES |
@@ -188,7 +205,10 @@ def safeMove(pos):
         print(f"safeMove: verifying move to\n{pos}")
         if verifyPosition(pos):
             print(f"safeMove: move verified, moving to {pos}")
-            robot.move(pos)
+            try:
+                robot.move(pos)
+            except pn.api.exceptions.NiryoRobotException as e:
+                print(f"safeMove() - ERROR: encountered exception in safemove: {e}")
             return True
         else:
             print(f"safeMove: Move to position {pos} unsafe, discarded")
@@ -196,25 +216,45 @@ def safeMove(pos):
     else:
         raise TypeError(f"unsupported type {type(pos)} for safeMove")
 
+# helper function specifically for sending messages to the practable websocket
+# will be used by both the practable thread and arm thread, so should be here
+def sendPractableMessage(message):
+    if type(message) is not dict:
+        print(f"ERROR IN sendPractableMessage: message {message} is not a dict")
+        return False
 
-# # verify a command is correct
-# def verifyCommandString(com):
-#     # check it's actually json
-#     try:
-#         comJSON = json.loads(com)
-#     except json.decoder.JSONDecodeError:
-#         return (False,'{"replyComm":"NOT_SET","result":"fail","displayText":"Error: Invalid command.","message":"ERROR: BAD JSON - FAILED TO DECODE"}')
-#     # check the 'command' field is valid
-#     # check the number of args
-#     # check the data type of args
-#     # return success/failure and message
+    # convert message into sendable format
+    try:  # just in case
+        m = json.dumps(message)
+
+    except Exception as e:
+        print(f"ERROR IN sendPractableMessage: dict -> json string conversion failed for message: {message}")
+        return False
+    
+    try:
+        practable_ws.send(m)
+        return True
+    
+    except websockets.ConnectionClosed as e:
+        print(f"ERROR IN sendPractableMessage: Practable connection marked as closed.")
+        practableErrorEvent.set()
+        return False
+
+    # this should never trigger, but check anyway
+    except TypeError as e:
+        print(f"ERROR IN sendPractableMessage: Message {message} has invalid type {type(message)}")
+        return False
+    
+    except Exception as e:
+        print(f"ERROR IN sendPractableMessage: Exception: {e}")
+        return False
 
 
 # ==================
 # | INITIALISATION |
 # ==================
 
-# TODO: checka and open log file
+# TODO: check and open log file
 # TODO: check and read config file
 
 
@@ -228,7 +268,8 @@ for i in range(NO_CONNECTION_ATTEMPTS_ARM):
             robot = pn.NiryoRobot(ROBOT_IP)
 
         except pn.api.exceptions.ClientNotConnectedException:
-            print(f"WARNING: failed connection attempt {i+1} to {ROBOT_IP}")
+            print(f"WARNING: failed connection attempt {i+1} to {ROBOT_IP}. RETRYING IN 3 SECONDS")
+            time.sleep(3)
 
 # check if connection successful
 if (robot != None):
@@ -266,7 +307,13 @@ for i in range(NO_CONNECTION_ATTEMPTS_PRACTABLE):
         break
 
     except Exception as e:
-        print(f"{CS_P}Failed attempt {i} at connecting to {PRACTABLE_WEBSOCKET_ADDRESS}")
+        print(f"{CS_M}Failed attempt {i} at connecting to {PRACTABLE_WEBSOCKET_ADDRESS}")
+
+if practable_ws is not None:
+    exit(False)  # FIXME: dont just exit, restary every so often
+else:
+    print(f"{CS_M}successfully established practable connection")
+
 
 print("----- PRACTALBE CONNECTION INITIALISATION COMPLETE -----")
 
@@ -376,7 +423,6 @@ def practableThreadFunction():
                                     )
                             )
                             practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
-                        # ======================
 
                         case "gripper_open":
                             COMMAND_QUEUE.put(("gripper_open",None))
@@ -460,7 +506,6 @@ def practableThreadFunction():
         # need this to prevent deadlock
         pthreadInit.set()
 
-pthreadInit = threading.Event()
 practableThread = threading.Thread(target=practableThreadFunction, args=[])
 practableThread.start()
 pthreadInit.wait()
@@ -471,6 +516,7 @@ def armThreadFunction():
     try:
         # this needs aditional safety stuff, but I need to test it for now
         bufferedCommand = None
+        robot.get_joints()  # to test the connection works
         armThreadInit.set()
         while True:
             if bufferedCommand is None:
@@ -592,6 +638,15 @@ def armThreadFunction():
 
                     robot.move(target)
 
+    except pn.api.exceptions.HostNotReachableException as e:
+        # uh oh. this might require a restart of the arm
+        # Note: this is ALSO raised once the arm is restarted after a hung connection!!! :) fun!!!!!
+        print(f"{CS_A}ERROR - ARM CONNECTION MAY BE BROKEN. IF RECONNECTION UNSUCCESSFUL, RESTART THE ARM: {e}")
+
+    except pn.api.exceptions.ClientNotConnectedException as e:
+        # probably means the robot ip address is wrong
+        print(f"{CS_A}CLIENT CONNECTION ERROR, CHECK ROBOT IP {ROBOT_IP} IS CORRECT: {e}")
+
     except Exception as e:
         # TODO: handle/log/display errors
         print(f"{CS_A}ERROR: ARM THREAD ENCOUNTERED AN EXCEPTION: {e}")
@@ -600,7 +655,6 @@ def armThreadFunction():
     finally:
         armThreadInit.set()
 
-armThreadInit = threading.Event()
 armThread = threading.Thread(target=armThreadFunction, args=[])
 armThread.start()
 armThreadInit.wait()
@@ -609,4 +663,8 @@ print("----- ARM THREAD INITIALISATION COMPLETE -----")
 
 # need to do SOMETHING with the main thread, otherwise we just instantly close
 while True:
-    sleep(3)
+    masterThreadEvent.wait(timeout=15)
+    # main maintainance loop
+    # check health of other threads
+    # if not armThread.is_alive():
+    #     do something here
