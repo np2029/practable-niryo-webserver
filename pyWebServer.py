@@ -538,128 +538,128 @@ def armThreadFunction():
                 # and set command to none so whatever did it doesnt happen again
                 command = None
 
-                # get the command for this itteration
-                # first, check if its still set due to an exception interrupting it
-                if command is None:
-                    # next, check if there is a buffered command
-                    if bufferedCommand is None:
-                        # get a new command
-                        command = COMMAND_QUEUE.get()
-                    else:
-                        command = bufferedCommand
+            # get the command for this itteration
+            # first, check if its still set due to an exception interrupting it
+            if command is None:
+                # next, check if there is a buffered command
+                if bufferedCommand is None:
+                    # get a new command
+                    command = COMMAND_QUEUE.get()
+                else:
+                    command = bufferedCommand
 
-                # we now have the command, lets execute it
-                (com, args) = command
-                print(f"{CS_A}executing command: {command}")
-                # practable_ws.send(f'{{""}}')  # send to signify a command has started execution
-                match com:
-                    case "move_tcp":
-                        safeMove(args)
-    
-                    case "move_jp":
-                        safeMove(args)
-    
-                    case "update_jog_jp":
-                        final = args[0:6]
-                        targets = robot.get_joints()[0:6]  # current angle set as default for safety reasons
-                        timeout = 0
-                        while True:
-                            # main block
-                            angles = robot.get_joints()[0:6]
-                            jog = [0,0,0,0,0,0]
-    
-                            # check for updates to the target
-                            if COMMAND_QUEUE.qsize() > 0 and bufferedCommand is None:
-                                update = COMMAND_QUEUE.get()
-                                if update[0] == "update_jog_jp":
-                                    final = update[1][0:6]
-                                else:
-                                    bufferedCommand = update
-                
-                            # find remaining angles for all joints
-                            remaining = [0,0,0,0,0,0]
+            # we now have the command, lets execute it
+            (com, args) = command
+            print(f"{CS_A}executing command: {command}")
+            # practable_ws.send(f'{{""}}')  # send to signify a command has started execution
+            match com:
+                case "move_tcp":
+                    safeMove(args)
+
+                case "move_jp":
+                    safeMove(args)
+
+                case "update_jog_jp":
+                    final = args[0:6]
+                    targets = robot.get_joints()[0:6]  # current angle set as default for safety reasons
+                    timeout = 0
+                    while True:
+                        # main block
+                        angles = robot.get_joints()[0:6]
+                        jog = [0,0,0,0,0,0]
+
+                        # check for updates to the target
+                        if COMMAND_QUEUE.qsize() > 0 and bufferedCommand is None:
+                            update = COMMAND_QUEUE.get()
+                            if update[0] == "update_jog_jp":
+                                final = update[1][0:6]
+                            else:
+                                bufferedCommand = update
+            
+                        # find remaining angles for all joints
+                        remaining = [0,0,0,0,0,0]
+                        for i in range(6):
+                            remaining[i] = final[i] - angles[i]
+            
+                        # check if at final destination
+                        if np.all(list(map((lambda x: abs(x) <= 0.01), remaining))):
+                            # print("REACHED")
+                            break
+            
+                        # check if all joints at targets yet, assigning new ones and jogging if so
+                        if np.all(list(map((lambda x, y: abs(x-y) <= 0.01), angles, targets))) or time.time() > timeout:
                             for i in range(6):
-                                remaining[i] = final[i] - angles[i]
-                
-                            # check if at final destination
-                            if np.all(list(map((lambda x: abs(x) <= 0.01), remaining))):
-                                # print("REACHED")
-                                break
-                
-                            # check if all joints at targets yet, assigning new ones and jogging if so
-                            if np.all(list(map((lambda x, y: abs(x-y) <= 0.01), angles, targets))) or time.time() > timeout:
-                                for i in range(6):
-                                    if abs(remaining[i]) > 0.001:
-                                        jog[i] = math.copysign(min(abs(remaining[i]), 0.2), remaining[i])
-                                        targets[i] += jog[i]
-                                # print(f"NEW TARGETS: {targets}")
-                                # print(f"JOGGING: {jog}")
-                                robot.jog(pn.JointsPosition(*jog))
-                                timeout = time.time()+1
-                
-                        sleep(0.2)
-                        # print(f"FINAL LOCATION: {robot.get_joints()[0]}")
-    
-                    case "gripper_open":
-                        robot.open_gripper()
-                        gripperOpen = True
-    
-                    case "gripper_close":
+                                if abs(remaining[i]) > 0.001:
+                                    jog[i] = math.copysign(min(abs(remaining[i]), 0.2), remaining[i])
+                                    targets[i] += jog[i]
+                            # print(f"NEW TARGETS: {targets}")
+                            # print(f"JOGGING: {jog}")
+                            robot.jog(pn.JointsPosition(*jog))
+                            timeout = time.time()+1
+            
+                    sleep(0.2)
+                    # print(f"FINAL LOCATION: {robot.get_joints()[0]}")
+
+                case "gripper_open":
+                    robot.open_gripper()
+                    gripperOpen = True
+
+                case "gripper_close":
+                    robot.close_gripper()
+                    gripperOpen = False
+
+                case "gripper_toggle":
+                    if gripperOpen == None:
+                        # could assign default, for now just do nothing
+                        pass
+                    elif gripperOpen:
                         robot.close_gripper()
                         gripperOpen = False
-    
-                    case "gripper_toggle":
-                        if gripperOpen == None:
-                            # could assign default, for now just do nothing
-                            pass
-                        elif gripperOpen:
-                            robot.close_gripper()
-                            gripperOpen = False
+                    else:
+                        robot.open_gripper()
+                        gripperOpen = True
+
+                case "gripper_control":
+                    robot.control_gripper(
+                        args["position"],
+                        args["speed"],
+                        args["max_torque"],
+                        args["hold_torque"]
+                    )
+                    gripperOpen = None
+
+                case "calibrate":
+                    robot.calibrate_auto()
+
+                case "go_home":
+                    # use the saved home pose so it works when the user changes it
+                    # still need to check it's safe,
+                    # otherwise users could use an unsafe home pose to bypass the checks
+                    safeMove(robot.get_home_pose())
+
+                case "mutable_move_tcp":
+                    target = args
+                    # check for updates to the target
+                    while COMMAND_QUEUE.qsize() > 0 and bufferedCommand is None:
+                        update = COMMAND_QUEUE.get()
+                        if update[0] == "mutable_move_tcp":
+                            target = update[1]
                         else:
-                            robot.open_gripper()
-                            gripperOpen = True
-    
-                    case "gripper_control":
-                        robot.control_gripper(
-                            args["position"],
-                            args["speed"],
-                            args["max_torque"],
-                            args["hold_torque"]
-                        )
-                        gripperOpen = None
-    
-                    case "calibrate":
-                        robot.calibrate_auto()
-    
-                    case "go_home":
-                        # use the saved home pose so it works when the user changes it
-                        # still need to check it's safe,
-                        # otherwise users could use an unsafe home pose to bypass the checks
-                        safeMove(robot.get_home_pose())
-    
-                    case "mutable_move_tcp":
-                        target = args
-                        # check for updates to the target
-                        while COMMAND_QUEUE.qsize() > 0 and bufferedCommand is None:
-                            update = COMMAND_QUEUE.get()
-                            if update[0] == "mutable_move_tcp":
-                                target = update[1]
-                            else:
-                                bufferedCommand = update
-    
-                        robot.move(target)
-    
-                    case "mutable_move_jp":
-                        target = args
-                        # check for updates to the target
-                        while COMMAND_QUEUE.qsize() > 0 and bufferedCommand is None:
-                            update = COMMAND_QUEUE.get()
-                            if update[0] == "mutable_move_jp":
-                                target = update[1]
-                            else:
-                                bufferedCommand = update
-    
-                        robot.move(target)
+                            bufferedCommand = update
+
+                    robot.move(target)
+
+                case "mutable_move_jp":
+                    target = args
+                    # check for updates to the target
+                    while COMMAND_QUEUE.qsize() > 0 and bufferedCommand is None:
+                        update = COMMAND_QUEUE.get()
+                        if update[0] == "mutable_move_jp":
+                            target = update[1]
+                        else:
+                            bufferedCommand = update
+
+                    robot.move(target)
 
         # main exceptions 
 
