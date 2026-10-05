@@ -257,6 +257,8 @@ def sendPractableMessage(message):
 
 # to be called on first connection after robot is turned off
 def setupRobot():
+    global robot
+    global gripperOpen
     gripperOpen = True # annoyingly, we need this variable
     robot.open_gripper()
     robot.move(robot.get_home_pose())
@@ -547,6 +549,7 @@ def armThreadFunction():
                     command = COMMAND_QUEUE.get()
                 else:
                     command = bufferedCommand
+                    bufferedCommand = None
 
             # we now have the command, lets execute it
             (com, args) = command
@@ -660,6 +663,9 @@ def armThreadFunction():
                             bufferedCommand = update
 
                     robot.move(target)
+
+            # need to reset command to None
+            command = None
 
         # main exceptions 
 
