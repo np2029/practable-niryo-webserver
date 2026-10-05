@@ -434,7 +434,7 @@ def practableThreadFunction():
 
                 case "mutable_move_jp":
                     COMMAND_QUEUE.put(
-                        ("move_jp",
+                        ("mutable_move_jp",
                         pn.JointsPosition( 
                                 typeCorrectArgs["j0"],
                                 typeCorrectArgs["j1"],
@@ -489,6 +489,7 @@ armThreadKillEvent = threading.Event()
 
 def armThreadFunction():
     global robot
+    global gripperOpen
     # this needs aditional safety stuff, but I need to test it for now
     bufferedCommand = None
     command = None
