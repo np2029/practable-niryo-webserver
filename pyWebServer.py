@@ -260,6 +260,7 @@ def setupRobot():
     gripperOpen = True # annoyingly, we need this variable
     robot.open_gripper()
     robot.move(robot.get_home_pose())
+    robot.set_home_pose(pn.JointsPosition(0, 0.5, -1.25, 0,0,0))
 
 # ==================
 # | INITIALISATION |
@@ -269,8 +270,8 @@ def setupRobot():
 # TODO: check and read config file
 
 robot = None
-homePose = robot.forward_kinematics(pn.JointsPosition(0,0.5,-1.25,0,0,0))
-robot.set_home_pose(homePose)
+#homePose = robot.forward_kinematics(pn.JointsPosition(0,0.5,-1.25,0,0,0))
+#robot.set_home_pose(homePose)
 
 practable_ws = None
 
@@ -724,7 +725,10 @@ def armThreadFunction():
                     # do logging stuff and keep waiting
                     print(f"{CS_A}CONNECTION THREAD TIMED OUT - LIKELY HANGING INDEFINITELY")
                     # log stuff here
-                
+
+                # we have triggered the event, now we need to reset it
+                connectionAttemptEnded.clear()
+
                 # the connection attempt has ended, but it could have encountered an exception
                 if exc is None:
                     # successfully connected
@@ -765,6 +769,9 @@ def armThreadFunction():
                     print(f"{CS_A}CONNECTION THREAD TIMED OUT - LIKELY HANGING INDEFINITELY")
                     # log stuff here
                 
+                # we have triggered the event, now we need to reset it
+                connectionAttemptEnded.clear()
+
                 # the connection attempt has ended, but it could have encountered an exception
                 if exc is None:
                     # successfully connected
