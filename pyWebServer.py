@@ -35,6 +35,9 @@ NO_CONNECTION_ATTEMPTS_ARM = 3
 # number of connection attempts to the practable websocket
 NO_CONNECTION_ATTEMPTS_PRACTABLE = 3
 
+# seconds between sets of connection attempts
+CONNECTION_ATTEMPT_COOLDOWN_PRACTABLE = 30
+
 # localhost websocket port to send and recieve data to/from Practable.io
 PRACTABLE_WEBSOCKET_ADDRESS = "ws://localhost:8888/ws/data"
 
@@ -116,6 +119,9 @@ VALID_COMMANDS = {
 
 # global command queue
 COMMAND_QUEUE = queue.Queue()
+
+# to be updated when the robot is initialised and turned off
+ROBOT_SETUP_COMPLETE = False
 
 # Threading Events:
 # events used in thread initialisation
@@ -205,10 +211,10 @@ def safeMove(pos):
         print(f"safeMove: verifying move to\n{pos}")
         if verifyPosition(pos):
             print(f"safeMove: move verified, moving to {pos}")
-            try:
-                robot.move(pos)
-            except pn.api.exceptions.NiryoRobotException as e:
-                print(f"safeMove() - ERROR: encountered exception in safemove: {e}")
+            #try:
+            robot.move(pos)  # re-indent when enabling try/except
+            #except pn.api.exceptions.NiryoRobotException as e:
+                #print(f"safeMove() - ERROR: encountered exception in safemove: {e}")
             return True
         else:
             print(f"safeMove: Move to position {pos} unsafe, discarded")
@@ -249,6 +255,11 @@ def sendPractableMessage(message):
         print(f"ERROR IN sendPractableMessage: Exception: {e}")
         return False
 
+# to be called on first connection after robot is turned off
+def setupRobot():
+    gripperOpen = True # annoyingly, we need this variable
+    robot.open_gripper()
+    robot.move(robot.get_home_pose())
 
 # ==================
 # | INITIALISATION |
@@ -257,414 +268,551 @@ def sendPractableMessage(message):
 # TODO: check and open log file
 # TODO: check and read config file
 
-
-print("----- ARM INITIALISATION BEGINING -----")
-print("ARM INITIALISATION: Attempting arm connection on ip {ROBOT_IP}")
-# attempt to connect to the arm
 robot = None
-for i in range(NO_CONNECTION_ATTEMPTS_ARM):
-    if robot == None:
+homePose = robot.forward_kinematics(pn.JointsPosition(0,0.5,-1.25,0,0,0))
+robot.set_home_pose(homePose)
+
+practable_ws = None
+
+# move this later
+practableThreadKillEvent = threading.Event()
+
+def practableThreadFunction():
+    # globals
+    global practable_ws
+
+    while not practableThreadKillEvent.is_set():
+        # PLAN
+        # ws initialised as None.
+        # on function enter, check if none.
+        # if none, raise connectionclosed 
+
+        # WE NEED 2 LOOPS: 
+        # one if connection closed
+        # one if connection failed (couldn't connect in the first place)
+
+        try:
+            # main code here
+            if practable_ws is None:
+                # this triggers the code below to begin connection attempts
+                raise websockets.ConnectionClosedError(None, None)
+            
+            # wait for an incoming message
+            incoming = practable_ws.recv()
+            print(f"{CS_P}recieved message:\n{incoming}")
+
+            # message verification
+            # check if json is valid
+            try:
+                messageJSON = json.loads(incoming)
+            except json.decoder.JSONDecodeError:
+                # command was bad json. send a reply stating as such
+                practable_ws.send('{"replyComm":"NOT_SET","result":"fail","displayText":"Error: Invalid command.","message":"ERROR: BAD JSON - FAILED TO DECODE"}')
+                print(f"{CS_P}RECEIVED BAD COMMAND: {messageJSON}")
+                continue
+
+            # json is correct, check if command variable exists
+            if "command" not in messageJSON:
+                practable_ws.send('{"replyComm":"NOT_SET","result":"fail","displayText":"Error: Invalid command.","message":"ERROR: COMMAND ATTRIBUTE NOT SET FOR RECIEVED COMMAND"}')
+                print(f"{CS_P}ERROR: COMMAND NOT SET IN INCOMING JSON: {messageJSON}")
+                continue
+
+            # command exists, check if its a real command
+            if messageJSON["command"] not in VALID_COMMANDS:
+                # command not present. reply with error
+                practable_ws.send('{"replyComm":"NOT_SET","result":"fail","displayText":"Error: Invalid command.","message":"ERROR: COMMAND ATTRIBUTE VALUE NOT RECOGNISED"}')
+                print(f"{CS_P}ERROR: COMMAND NOT RECOGNISED: {messageJSON}")
+                continue
+
+            # command is real, check the args
+            typeCorrectArgs = {}
+            for i in messageJSON:
+                if i != "command":
+                    try:
+                        typeCorrectArgs[i] = VALID_COMMANDS[messageJSON["command"]][i](messageJSON[i])
+                    except:
+                        # type mismatch, invalid command
+                        practable_ws.send('{"replyComm":"NOT_SET","result":"fail","displayText":"Error: Invalid command.","message":"ERROR: ARGUMENT TYPE MISMATCH: "'+str(messageJSON[i])+' IS NOT TYPE '+str(VALID_COMMANDS[messageJSON["command"]][i])+'}')
+                        print(f"{CS_P}ERROR: COMMAND TYPE MISMATCH: {messageJSON[i]} IS NOT TYPE {VALID_COMMANDS[messageJSON["command"]][i]}")
+                        break
+
+            # need to check again, previous continue just breaks the arg check loop
+            if len(typeCorrectArgs) != len(messageJSON)-1:  # -1 to account for missing "command"
+                continue
+
+            # now that we have a 100% valid command and args, we can do any final pre-processing
+            match messageJSON["command"]:
+                # these commands need little/no pre-processing and can be put directly in the queue
+                # each command needs a case so that the acknoledgements can be personalised
+                case "move_tcp":
+                    COMMAND_QUEUE.put(
+                        ("move_tcp",
+                        pn.PoseObject(
+                            typeCorrectArgs["x"],
+                            typeCorrectArgs["y"],
+                            typeCorrectArgs["z"],
+                            typeCorrectArgs["roll"],
+                            typeCorrectArgs["pitch"],
+                            typeCorrectArgs["yaw"],
+                        )
+                        )
+                    )
+                    practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
+
+                case "move_jp":
+                    COMMAND_QUEUE.put(
+                        ("move_jp",
+                        pn.JointsPosition( 
+                                typeCorrectArgs["j0"],
+                                typeCorrectArgs["j1"],
+                                typeCorrectArgs["j2"],
+                                typeCorrectArgs["j3"],
+                                typeCorrectArgs["j4"],
+                                typeCorrectArgs["j5"]
+                            )
+                            )
+                    )
+                    practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
+
+                case "update_jog_jp":
+                    COMMAND_QUEUE.put(
+                        ("update_jog_jp",
+                        pn.JointsPosition( 
+                                typeCorrectArgs["j0"],
+                                typeCorrectArgs["j1"],
+                                typeCorrectArgs["j2"],
+                                typeCorrectArgs["j3"],
+                                typeCorrectArgs["j4"],
+                                typeCorrectArgs["j5"]
+                            )
+                            )
+                    )
+                    practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
+
+                case "gripper_open":
+                    COMMAND_QUEUE.put(("gripper_open",None))
+                    practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
+
+                case "gripper_close":
+                    COMMAND_QUEUE.put(("gripper_close",None))
+                    practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
+                    
+                case "gripper_toggle":
+                    COMMAND_QUEUE.put(("gripper_toggle",None))
+                    practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
+
+                case "gripper_control":
+                    COMMAND_QUEUE.put(("gripper_control", typeCorrectArgs))
+
+                case "signal":
+                    # dont do anything with the command queue, just print to console and log
+                    print(f"{CS_P}Signal Recieved: {typeCorrectArgs["text"]}")
+                    practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
+
+                case "calibrate":
+                    COMMAND_QUEUE.put(("calibrate",None))
+                    practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
+
+                case "go_home":
+                    COMMAND_QUEUE.put(("go_home",None))
+                    practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
+
+                case "mutable_move_tcp":
+                    COMMAND_QUEUE.put(
+                        ("mutable_move_tcp",
+                        pn.PoseObject(
+                            typeCorrectArgs["x"],
+                            typeCorrectArgs["y"],
+                            typeCorrectArgs["z"],
+                            typeCorrectArgs["roll"],
+                            typeCorrectArgs["pitch"],
+                            typeCorrectArgs["yaw"],
+                        )
+                        )
+                    )
+                    practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
+
+                case "mutable_move_jp":
+                    COMMAND_QUEUE.put(
+                        ("move_jp",
+                        pn.JointsPosition( 
+                                typeCorrectArgs["j0"],
+                                typeCorrectArgs["j1"],
+                                typeCorrectArgs["j2"],
+                                typeCorrectArgs["j3"],
+                                typeCorrectArgs["j4"],
+                                typeCorrectArgs["j5"]
+                            )
+                            )
+                    )
+                    practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
+
+                # this should never trigger, should be filtered out by above. check anyway
+                case _:
+                    practable_ws.send('{"replyComm":"NOT_SET","result":"fail","displayText":"Error: Invalid command.","message":"ERROR: COMMAND ATTRIBUTE VALUE NOT RECOGNISED"}')
+                    print(f"{CS_P}congratulations! you did the impossible and triggered the default case in the command match statement! json:\n{messageJSON}")
+                    continue
+
+        # technically we only need to catch ConnectionClosed, but better be safe
+        except (websockets.ConnectionClosedOK, websockets.ConnectionClosedError ,websockets.ConnectionClosed):
+            # check for first time connection
+            # if practable_ws is None:
+            #     # dont log anything. remember
+            # else:
+            #     # log a bunch of stuff. its about to get set to None anyway
+
+            # reconnect with the websocket
+            # this needs its own while loop and try/except
+            practable_ws = None
+            while practable_ws is None:
+                for i in range(NO_CONNECTION_ATTEMPTS_PRACTABLE):
+                    try:
+                        practable_ws = connect(PRACTABLE_WEBSOCKET_ADDRESS)
+                        # if this doesn't raise an exception, we will reach this
+                        break
+
+                    # there are too many exception types to handle individually, just do them all
+                    except Exception as e:
+                        pass
+
+                # above only breaks the loop, need to check again
+                if practable_ws is None:
+                    sleep(CONNECTION_ATTEMPT_COOLDOWN_PRACTABLE)
+
+                # if by here a connection has been made, the loop will exit
+
+    # code here runs if the thread is killed
+    print(f"{CS_P}PRACTABLE THREAD KILLED")
+
+# move this later
+armThreadKillEvent = threading.Event()
+
+def armThreadFunction():
+    global robot
+    # this needs aditional safety stuff, but I need to test it for now
+    bufferedCommand = None
+    command = None
+
+    # for the connection function
+    exc = None
+    connectionAttemptEnded = threading.Event()
+
+    # need this later for threading reasons
+    def armConnectHelper():
+        global robot
+        nonlocal exc
         try:
             robot = pn.NiryoRobot(ROBOT_IP)
 
-        except pn.api.exceptions.ClientNotConnectedException:
-            print(f"WARNING: failed connection attempt {i+1} to {ROBOT_IP}. RETRYING IN 3 SECONDS")
-            time.sleep(3)
+        # this can ONLY throw ClientNotConnected exception
+        except pn.api.exceptions.ClientNotConnectedException as e:
+            exc = e
 
-# check if connection successful
-if (robot != None):
-    print(f"ARM INITIALISATION: Connection to {ROBOT_IP} successful")
-else:
-    print(f"ERROR: Could not connect to {ROBOT_IP}")
-    exit(False) # FIXME: don't just exit, restart every 60s or so.
+        # just in case
+        except Exception as e:
+            exc = e
 
-# calibrate arm
-print("ARM INITIALISATION: Auto calibrating arm")
-robot.calibrate_auto()
+        # to signify we are not hanging anymore
+        finally:
+            connectionAttemptEnded.set()
 
-# hard code home pose and move there immediately
-homePose = robot.forward_kinematics(pn.JointsPosition(0,0.5,-1.25,0,0,0))
-robot.set_home_pose(0, 0.5, -1.25, 0, 0, 0)
-print("ARM INITIALISATION: Moving to home pose")
-robot.move_to_home_pose()
+    while not armThreadKillEvent.is_set():
+        try:
+            # check connection exists
+            if robot is None:
+                # this will trigger code in the except to establish a connection
+                raise pn.api.exceptions.ClientNotConnectedException("robot is None")
 
-# open gripper and save gripper state
-# it should be open anyway, but just to make sure
-print("ARM INITIALISATION: Opening gripper")
-robot.open_gripper()
-gripperOpen = True # annoyingly, we need this variable
+            # calibrate if needed
+            if robot.need_calibration:
+                robot.calibrate_auto()
 
-print("----- ARM INITIALISATION COMPLETE -----")
+            # check for collision
+            if robot.collision_detected:
+                robot.clear_collision_detected()
+                # move to a known safe pose
+                robot.move(pn.JointsPosition(0, 0.5, -1.25, 0,0,0))
 
+                # and set command to none so whatever did it doesnt happen again
+                command = None
 
-print("----- PRACTALBE CONNECTION INITIALISATION BEGINING -----")
-practable_ws = None
-print(f"{CS_M}Attempting to connect to {PRACTABLE_WEBSOCKET_ADDRESS}")
-for i in range(NO_CONNECTION_ATTEMPTS_PRACTABLE):
-    try:
-        practable_ws = connect(PRACTABLE_WEBSOCKET_ADDRESS)
-        # if we get here we have a connection.
-        break
+                # get the command for this itteration
+                # first, check if its still set due to an exception interrupting it
+                if command is None:
+                    # next, check if there is a buffered command
+                    if bufferedCommand is None:
+                        # get a new command
+                        command = COMMAND_QUEUE.get()
+                    else:
+                        command = bufferedCommand
 
-    except Exception as e:
-        print(f"{CS_M}Failed attempt {i} at connecting to {PRACTABLE_WEBSOCKET_ADDRESS}")
-
-if practable_ws is not None:
-    exit(False)  # FIXME: dont just exit, restary every so often
-else:
-    print(f"{CS_M}successfully established practable connection")
-
-
-print("----- PRACTALBE CONNECTION INITIALISATION COMPLETE -----")
-
-print("----- PRACTABLE THREAD INITIALISATION BEGINING -----")
-
-def practableThreadFunction():
-    # need to wrap in try/catch so finally always happens
-    try:    
-        # test connection
-        if practable_ws is None:
-            raise Exception(f"{CS_P}failed {NO_CONNECTION_ATTEMPTS_PRACTABLE} connection attempts. exiting.")
-        else:
-            # we have a valid (for now) connection. lets use it
-            pthreadInit.set()
-            try:
-                # main loop. 
-                # might need to add an interrupt feature/variable later
-                while True:
-                    # wait for an incoming message
-                    incoming = practable_ws.recv()
-                    print(f"{CS_P}recieved message:\n{incoming}")
-
-                    # message verification
-                    # check if json is valid
-                    try:
-                        messageJSON = json.loads(incoming)
-                    except json.decoder.JSONDecodeError:
-                        # command was bad json. send a reply stating as such
-                        practable_ws.send('{"replyComm":"NOT_SET","result":"fail","displayText":"Error: Invalid command.","message":"ERROR: BAD JSON - FAILED TO DECODE"}')
-                        print(f"{CS_P}RECEIVED BAD COMMAND: {messageJSON}")
-                        continue
-
-                    # json is correct, check if command variable exists
-                    if "command" not in messageJSON:
-                        practable_ws.send('{"replyComm":"NOT_SET","result":"fail","displayText":"Error: Invalid command.","message":"ERROR: COMMAND ATTRIBUTE NOT SET FOR RECIEVED COMMAND"}')
-                        print(f"{CS_P}ERROR: COMMAND NOT SET IN INCOMING JSON: {messageJSON}")
-                        continue
-
-                    # command exists, check if its a real command
-                    if messageJSON["command"] not in VALID_COMMANDS:
-                        # command not present. reply with error
-                        practable_ws.send('{"replyComm":"NOT_SET","result":"fail","displayText":"Error: Invalid command.","message":"ERROR: COMMAND ATTRIBUTE VALUE NOT RECOGNISED"}')
-                        print(f"{CS_P}ERROR: COMMAND NOT RECOGNISED: {messageJSON}")
-                        continue
-
-                    # command is real, check the args
-                    typeCorrectArgs = {}
-                    for i in messageJSON:
-                        if i != "command":
-                            try:
-                                typeCorrectArgs[i] = VALID_COMMANDS[messageJSON["command"]][i](messageJSON[i])
-                            except:
-                                # type mismatch, invalid command
-                                practable_ws.send('{"replyComm":"NOT_SET","result":"fail","displayText":"Error: Invalid command.","message":"ERROR: ARGUMENT TYPE MISMATCH: "'+str(messageJSON[i])+' IS NOT TYPE '+str(VALID_COMMANDS[messageJSON["command"]][i])+'}')
-                                print(f"{CS_P}ERROR: COMMAND TYPE MISMATCH: {messageJSON[i]} IS NOT TYPE {VALID_COMMANDS[messageJSON["command"]][i]}")
-                                break
-
-                    # need to check again, previous continue just breaks the arg check loop
-                    if len(typeCorrectArgs) != len(messageJSON)-1:  # -1 to account for missing "command"
-                        continue
-
-                    # now that we have a 100% valid command and args, we can do any final pre-processing
-                    match messageJSON["command"]:
-                        # these commands need little/no pre-processing and can be put directly in the queue
-                        # each command needs a case so that the acknoledgements can be personalised
-                        case "move_tcp":
-                            COMMAND_QUEUE.put(
-                                ("move_tcp",
-                                pn.PoseObject(
-                                    typeCorrectArgs["x"],
-                                    typeCorrectArgs["y"],
-                                    typeCorrectArgs["z"],
-                                    typeCorrectArgs["roll"],
-                                    typeCorrectArgs["pitch"],
-                                    typeCorrectArgs["yaw"],
-                                )
-                                )
-                            )
-                            practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
-
-                        case "move_jp":
-                            COMMAND_QUEUE.put(
-                                ("move_jp",
-                                pn.JointsPosition( 
-                                     typeCorrectArgs["j0"],
-                                     typeCorrectArgs["j1"],
-                                     typeCorrectArgs["j2"],
-                                     typeCorrectArgs["j3"],
-                                     typeCorrectArgs["j4"],
-                                     typeCorrectArgs["j5"]
-                                 )
-                                 )
-                            )
-                            practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
-
-                        case "update_jog_jp":
-                            COMMAND_QUEUE.put(
-                                ("update_jog_jp",
-                                pn.JointsPosition( 
-                                        typeCorrectArgs["j0"],
-                                        typeCorrectArgs["j1"],
-                                        typeCorrectArgs["j2"],
-                                        typeCorrectArgs["j3"],
-                                        typeCorrectArgs["j4"],
-                                        typeCorrectArgs["j5"]
-                                    )
-                                    )
-                            )
-                            practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
-
-                        case "gripper_open":
-                            COMMAND_QUEUE.put(("gripper_open",None))
-                            practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
-
-                        case "gripper_close":
-                            COMMAND_QUEUE.put(("gripper_close",None))
-                            practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
-                            
-                        case "gripper_toggle":
-                            COMMAND_QUEUE.put(("gripper_toggle",None))
-                            practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
-
-                        case "gripper_control":
-                            COMMAND_QUEUE.put(("gripper_control", typeCorrectArgs))
-
-                        case "signal":
-                            # dont do anything with the command queue, just print to console and log
-                            print(f"{CS_P}Signal Recieved: {typeCorrectArgs["text"]}")
-                            practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
-
-                        case "calibrate":
-                            COMMAND_QUEUE.put(("calibrate",None))
-                            practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
-
-                        case "go_home":
-                            COMMAND_QUEUE.put(("go_home",None))
-                            practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
-
-                        case "mutable_move_tcp":
-                            COMMAND_QUEUE.put(
-                                ("mutable_move_tcp",
-                                pn.PoseObject(
-                                    typeCorrectArgs["x"],
-                                    typeCorrectArgs["y"],
-                                    typeCorrectArgs["z"],
-                                    typeCorrectArgs["roll"],
-                                    typeCorrectArgs["pitch"],
-                                    typeCorrectArgs["yaw"],
-                                )
-                                )
-                            )
-                            practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
-
-                        case "mutable_move_jp":
-                            COMMAND_QUEUE.put(
-                                ("move_jp",
-                                pn.JointsPosition( 
-                                        typeCorrectArgs["j0"],
-                                        typeCorrectArgs["j1"],
-                                        typeCorrectArgs["j2"],
-                                        typeCorrectArgs["j3"],
-                                        typeCorrectArgs["j4"],
-                                        typeCorrectArgs["j5"]
-                                    )
-                                    )
-                            )
-                            practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
-
-                        # this should never trigger, should be filtered out by above. check anyway
-                        case _:
-                            practable_ws.send('{"replyComm":"NOT_SET","result":"fail","displayText":"Error: Invalid command.","message":"ERROR: COMMAND ATTRIBUTE VALUE NOT RECOGNISED"}')
-                            print(f"{CS_P}congratulations! you did the impossible and triggered the default case in the command match statement! json:\n{messageJSON}")
-                            continue
-
-
-            except Exception as e:
-                # TODO: handle/log/display errors
-                # NOTE: an exception always happens when the connection is closed, catch it seperately
-                print(f"{CS_P}ERROR: PRACTABLE THREAD ENCOUNTERED AN EXCEPTION: {e}")
-                pass
-
-            finally:
-                practable_ws.close()
-
-    except Exception as e:
-        print("ERROR IN PRACTABLE THREAD INITIALISATION:")
-        print(e)
+                # we now have the command, lets execute it
+                (com, args) = command
+                print(f"{CS_A}executing command: {command}")
+                # practable_ws.send(f'{{""}}')  # send to signify a command has started execution
+                match com:
+                    case "move_tcp":
+                        safeMove(args)
     
-    finally:
-        # need this to prevent deadlock
-        pthreadInit.set()
+                    case "move_jp":
+                        safeMove(args)
+    
+                    case "update_jog_jp":
+                        final = args[0:6]
+                        targets = robot.get_joints()[0:6]  # current angle set as default for safety reasons
+                        timeout = 0
+                        while True:
+                            # main block
+                            angles = robot.get_joints()[0:6]
+                            jog = [0,0,0,0,0,0]
+    
+                            # check for updates to the target
+                            if COMMAND_QUEUE.qsize() > 0 and bufferedCommand is None:
+                                update = COMMAND_QUEUE.get()
+                                if update[0] == "update_jog_jp":
+                                    final = update[1][0:6]
+                                else:
+                                    bufferedCommand = update
+                
+                            # find remaining angles for all joints
+                            remaining = [0,0,0,0,0,0]
+                            for i in range(6):
+                                remaining[i] = final[i] - angles[i]
+                
+                            # check if at final destination
+                            if np.all(list(map((lambda x: abs(x) <= 0.01), remaining))):
+                                # print("REACHED")
+                                break
+                
+                            # check if all joints at targets yet, assigning new ones and jogging if so
+                            if np.all(list(map((lambda x, y: abs(x-y) <= 0.01), angles, targets))) or time.time() > timeout:
+                                for i in range(6):
+                                    if abs(remaining[i]) > 0.001:
+                                        jog[i] = math.copysign(min(abs(remaining[i]), 0.2), remaining[i])
+                                        targets[i] += jog[i]
+                                # print(f"NEW TARGETS: {targets}")
+                                # print(f"JOGGING: {jog}")
+                                robot.jog(pn.JointsPosition(*jog))
+                                timeout = time.time()+1
+                
+                        sleep(0.2)
+                        # print(f"FINAL LOCATION: {robot.get_joints()[0]}")
+    
+                    case "gripper_open":
+                        robot.open_gripper()
+                        gripperOpen = True
+    
+                    case "gripper_close":
+                        robot.close_gripper()
+                        gripperOpen = False
+    
+                    case "gripper_toggle":
+                        if gripperOpen == None:
+                            # could assign default, for now just do nothing
+                            pass
+                        elif gripperOpen:
+                            robot.close_gripper()
+                            gripperOpen = False
+                        else:
+                            robot.open_gripper()
+                            gripperOpen = True
+    
+                    case "gripper_control":
+                        robot.control_gripper(
+                            args["position"],
+                            args["speed"],
+                            args["max_torque"],
+                            args["hold_torque"]
+                        )
+                        gripperOpen = None
+    
+                    case "calibrate":
+                        robot.calibrate_auto()
+    
+                    case "go_home":
+                        # use the saved home pose so it works when the user changes it
+                        # still need to check it's safe,
+                        # otherwise users could use an unsafe home pose to bypass the checks
+                        safeMove(robot.get_home_pose())
+    
+                    case "mutable_move_tcp":
+                        target = args
+                        # check for updates to the target
+                        while COMMAND_QUEUE.qsize() > 0 and bufferedCommand is None:
+                            update = COMMAND_QUEUE.get()
+                            if update[0] == "mutable_move_tcp":
+                                target = update[1]
+                            else:
+                                bufferedCommand = update
+    
+                        robot.move(target)
+    
+                    case "mutable_move_jp":
+                        target = args
+                        # check for updates to the target
+                        while COMMAND_QUEUE.qsize() > 0 and bufferedCommand is None:
+                            update = COMMAND_QUEUE.get()
+                            if update[0] == "mutable_move_jp":
+                                target = update[1]
+                            else:
+                                bufferedCommand = update
+    
+                        robot.move(target)
+
+        # main exceptions 
+
+        # NOTE
+        # my obersvations from the arm connection method:
+        # the arm appears to allow at any given time:
+        #   a single fully alive and served connection (MAIN)
+        #   2 (more) alive but hung connections (QUEUED)
+
+        # MAIN and QUEUED connections show the message "connected on port xxxx" when made
+        # any more attempted connections simply hang with no message (HUNG)
+
+        # if the MAIN connection is closed successfully, 
+        # one of the QUEUED connections becomes the MAIN
+        # and a new QUEUED slot opens up
+
+        # !!!HOWEVER!!!
+        # the TCP connections are NEVER timedout by the arm, 
+        # so if the MAIN connection drops on the client pc (unplugged cable, etc)
+        # the connection is PERMINANTLY BROKEN because the arm still considers it the MAIN
+        # and refuses any others until it is closed sucessfully which is now impossible
+        # as the client has droppped the connection 
+
+        # if an attempted connection fails (cable out or arm off), two different exceptions can occur
+        # if QUEUED or MAIN connection (message "connected on port xxxx" shows), we get HostNotReachable
+        # if HUNG connection (nothing shows, just hangs), we get ClientNotConnected
+
+        # RAISED WHEN:
+        #   bad command (move with invalid coords etc)
+        except pn.api.exceptions.NiryoRobotException as e:
+            # in this case, nothing is wrong connection wise
+            # we simply need to skip the last command
+            command = None
+
+            # and do the appropriate logging/printing/replying
+            print(f"{CS_A}NiryoRobotException on command {command}. Details:\n{e}")
+
+        # RAISED WHEN:
+        #   bad ip address on connection attempt
+        #   cable unplugged on connection attempt
+        #   call function on properly disconnected robot variable
+        #       can filter for by setting to None
+        #       or checking type(robot)
+        #   the robot is turned off
+        #   QUEUED connection disconnected, sometimes (see above)
+        except pn.api.exceptions.ClientNotConnectedException as e:
+            # in this case, we need to attempt to re-connect to the arm
+            # every time you try to connect to the arm, there is a chance the process will hang
+            # therefore, we use another temporary thread to attempt the connection
+
+            # reset robot to None to try to kill old connection
+            robot = None
+
+            # we use a while true as we want to keep trying to connect
+            while True:
+
+                connectionThread = threading.Thread(target=armConnectHelper, args=[])
+                connectionThread.daemon = True
+                connectionThread.start()
+
+                while not connectionAttemptEnded.wait(timeout=30):
+                    # we are likely hanging indefinitely at this point.
+                    # do logging stuff and keep waiting
+                    print(f"{CS_A}CONNECTION THREAD TIMED OUT - LIKELY HANGING INDEFINITELY")
+                    # log stuff here
+                
+                # the connection attempt has ended, but it could have encountered an exception
+                if exc is None:
+                    # successfully connected
+                    print(f"{CS_A}SUCCESSFULLY CONNECTED TO ARM")
+                    setupRobot()
+                    break
+                else:
+                    # there's an exception, try again in 10 secs
+                    print(f"{CS_A}ARM CONNECTION THREAD ENCOUNTERED EXCEPTION:\n{exc}\n RETRYING IN 10 SECS")
+                    time.sleep(10)
+
+                    # remember to reset exc
+                    exc = None
+            
+
+        # RAISED WHEN:
+        #   call function on previously connected but now disconnected robot
+        #       this means the connection is permanently deadlocked. Too bad!
+        #   HUNG connection disconnected, sometimes (see above)
+        except pn.api.exceptions.HostNotReachableException as e:
+            print(f"{CS_A}HostNotReachable RAISED! VERY LIKELY TO HANG! Attempting to reconnect:")
+            
+            # the rest is the same as above
+
+            # reset robot to None to try to kill old connection
+            robot = None
+
+            # we use a while true as we want to keep trying to connect
+            while True:
+
+                connectionThread = threading.Thread(target=armConnectHelper, args=[])
+                connectionThread.daemon = True
+                connectionThread.start()
+
+                while not connectionAttemptEnded.wait(timeout=30):
+                    # we are likely hanging indefinitely at this point.
+                    # do logging stuff and keep waiting
+                    print(f"{CS_A}CONNECTION THREAD TIMED OUT - LIKELY HANGING INDEFINITELY")
+                    # log stuff here
+                
+                # the connection attempt has ended, but it could have encountered an exception
+                if exc is None:
+                    # successfully connected
+                    print(f"{CS_A}SUCCESSFULLY CONNECTED TO ARM")
+                    setupRobot()
+                    break
+                else:
+                    # there's an exception, try again in 10 secs
+                    print(f"{CS_A}ARM CONNECTION THREAD ENCOUNTERED EXCEPTION:\n{exc}\n RETRYING IN 10 SECS")
+                    time.sleep(10)
+
+                    # remember to reset exc
+                    exc = None
+
+            
+
+        # RAISED WHEN:
+        #   currently unknown. susptected to be internal only.
+        #   added for posterity and in case it triggers
+        except pn.api.exceptions.TcpCommandException as e:
+            print(f"{CS_A}TcpCommandException {e} encountered. HOW DID THIS HAPPEN?")
+            pass
+
+    # code here runs if the thread is killed
+    print(f"{CS_A}ARM THREAD KILLED")
+
+
+
+
+# ====================
+# | MAIN THREAD CODE |
+# ====================
 
 practableThread = threading.Thread(target=practableThreadFunction, args=[])
 practableThread.start()
-pthreadInit.wait()
-print("----- PRACTABLE THREAD INITIALISATION COMPLETE -----")
-print("----- ARM THREAD INITIALISATION BEGINING -----")
-
-def armThreadFunction():
-    try:
-        # this needs aditional safety stuff, but I need to test it for now
-        bufferedCommand = None
-        robot.get_joints()  # to test the connection works
-        armThreadInit.set()
-        while True:
-            if bufferedCommand is None:
-                command = COMMAND_QUEUE.get()
-            else:
-                command = bufferedCommand
-                bufferedCommand = None
-
-            # execute command. implement fully later
-            (com, args) = command
-            print(f"{CS_A}executing command: {command}")
-            # practable_ws.send(f'{{""}}')  # send to signify a command has started execution
-            match com:
-                case "move_tcp":
-                    safeMove(args)
-
-                case "move_jp":
-                    safeMove(args)
-
-                case "update_jog_jp":
-                    final = args[0:6]
-                    targets = robot.get_joints()[0:6]  # current angle set as default for safety reasons
-                    timeout = 0
-                    while True:
-                        # main block
-                        angles = robot.get_joints()[0:6]
-                        jog = [0,0,0,0,0,0]
-
-                        # check for updates to the target
-                        if COMMAND_QUEUE.qsize() > 0 and bufferedCommand is None:
-                            update = COMMAND_QUEUE.get()
-                            if update[0] == "update_jog_jp":
-                                final = update[1][0:6]
-                            else:
-                                bufferedCommand = update
-            
-                        # find remaining angles for all joints
-                        remaining = [0,0,0,0,0,0]
-                        for i in range(6):
-                            remaining[i] = final[i] - angles[i]
-            
-                        # check if at final destination
-                        if np.all(list(map((lambda x: abs(x) <= 0.01), remaining))):
-                            # print("REACHED")
-                            break
-            
-                        # check if all joints at targets yet, assigning new ones and jogging if so
-                        if np.all(list(map((lambda x, y: abs(x-y) <= 0.01), angles, targets))) or time.time() > timeout:
-                            for i in range(6):
-                                if abs(remaining[i]) > 0.001:
-                                    jog[i] = math.copysign(min(abs(remaining[i]), 0.2), remaining[i])
-                                    targets[i] += jog[i]
-                            # print(f"NEW TARGETS: {targets}")
-                            # print(f"JOGGING: {jog}")
-                            robot.jog(pn.JointsPosition(*jog))
-                            timeout = time.time()+1
-            
-                    sleep(0.2)
-                    # print(f"FINAL LOCATION: {robot.get_joints()[0]}")
-
-                case "gripper_open":
-                    robot.open_gripper()
-                    gripperOpen = True
-
-                case "gripper_close":
-                    robot.close_gripper()
-                    gripperOpen = False
-
-                case "gripper_toggle":
-                    if gripperOpen == None:
-                        # could assign default, for now just do nothing
-                        pass
-                    elif gripperOpen:
-                        robot.close_gripper()
-                        gripperOpen = False
-                    else:
-                        robot.open_gripper()
-                        gripperOpen = True
-
-                case "gripper_control":
-                    robot.control_gripper(
-                        args["position"],
-                        args["speed"],
-                        args["max_torque"],
-                        args["hold_torque"]
-                    )
-                    gripperOpen = None
-
-                case "calibrate":
-                    robot.calibrate_auto()
-
-                case "go_home":
-                    # use the saved home pose so it works when the user changes it
-                    # still need to check it's safe,
-                    # otherwise users could use an unsafe home pose to bypass the checks
-                    safeMove(robot.get_home_pose())
-
-                case "mutable_move_tcp":
-                    target = args
-                    # check for updates to the target
-                    while COMMAND_QUEUE.qsize() > 0 and bufferedCommand is None:
-                        update = COMMAND_QUEUE.get()
-                        if update[0] == "mutable_move_tcp":
-                            target = update[1]
-                        else:
-                            bufferedCommand = update
-
-                    robot.move(target)
-
-                case "mutable_move_jp":
-                    target = args
-                    # check for updates to the target
-                    while COMMAND_QUEUE.qsize() > 0 and bufferedCommand is None:
-                        update = COMMAND_QUEUE.get()
-                        if update[0] == "mutable_move_jp":
-                            target = update[1]
-                        else:
-                            bufferedCommand = update
-
-                    robot.move(target)
-
-    except pn.api.exceptions.HostNotReachableException as e:
-        # uh oh. this might require a restart of the arm
-        # Note: this is ALSO raised once the arm is restarted after a hung connection!!! :) fun!!!!!
-        print(f"{CS_A}ERROR - ARM CONNECTION MAY BE BROKEN. IF RECONNECTION UNSUCCESSFUL, RESTART THE ARM: {e}")
-
-    except pn.api.exceptions.ClientNotConnectedException as e:
-        # probably means the robot ip address is wrong
-        print(f"{CS_A}CLIENT CONNECTION ERROR, CHECK ROBOT IP {ROBOT_IP} IS CORRECT: {e}")
-
-    except Exception as e:
-        # TODO: handle/log/display errors
-        print(f"{CS_A}ERROR: ARM THREAD ENCOUNTERED AN EXCEPTION: {e}")
-        pass
-
-    finally:
-        armThreadInit.set()
 
 armThread = threading.Thread(target=armThreadFunction, args=[])
 armThread.start()
-armThreadInit.wait()
 
-print("----- ARM THREAD INITIALISATION COMPLETE -----")
 
 # need to do SOMETHING with the main thread, otherwise we just instantly close
 while True:
     masterThreadEvent.wait(timeout=15)
     # main maintainance loop
     # check health of other threads
-    # if not armThread.is_alive():
-    #     do something here
+    if not practableThread.is_alive():
+        practableThread = threading.Thread(target=practableThreadFunction, args=[])
+        practableThread.start()
+
+    if not armThread.is_alive():
+        armThread = threading.Thread(target=armThreadFunction, args=[])
+        armThread.start()
