@@ -11,6 +11,7 @@ import datetime
 import queue
 import time
 import math
+import os
 
 from time import sleep
 
@@ -30,16 +31,22 @@ from scipy.spatial.transform import Rotation as R
 ROBOT_IP = "169.254.200.200"    # ethernet cable
 
 # number of attempts to connect to the arm
-NO_CONNECTION_ATTEMPTS_ARM = 3
+# NO_CONNECTION_ATTEMPTS_ARM = 3
 
 # number of connection attempts to the practable websocket
-NO_CONNECTION_ATTEMPTS_PRACTABLE = 3
+# NO_CONNECTION_ATTEMPTS_PRACTABLE = 3
 
 # seconds between sets of connection attempts
 CONNECTION_ATTEMPT_COOLDOWN_PRACTABLE = 30
 
 # localhost websocket port to send and recieve data to/from Practable.io
 PRACTABLE_WEBSOCKET_ADDRESS = "ws://localhost:8888/ws/data"
+
+# directory to store logs
+LOG_DIRECTORY = os.path.join(
+    os.path.split(os.path.realpath(__file__))[0],
+    "logs"
+    )
 
 
 # TCP limits in meters
@@ -120,6 +127,9 @@ VALID_COMMANDS = {
 # global command queue
 COMMAND_QUEUE = queue.Queue()
 
+# global log file write queue
+LOG_QUEUE = queue.Queue()
+
 # to be updated when the robot is initialised and turned off
 ROBOT_SETUP_COMPLETE = False
 
@@ -164,7 +174,7 @@ def verifyPosition(position):
         raise TypeError(f"unsupported type {type(position)} for verifyPosition")
 
     # must be correct type past this point
-    print("verifyPosition: GOT PASSED TYPE CHECK")
+    # print("verifyPosition: GOT PASSED TYPE CHECK")
     # 1: calculate bounds of the physical gripper from the tcp position
     GRIPPER_WIDTH = 0.08# meters, 80mm
     GRIPPER_HEIGHT = 0.028# meters, 28mm
@@ -186,8 +196,8 @@ def verifyPosition(position):
         updatedBounds[i][2] += pos.z
 
     # 2: check the verts of the bounding box against the tcp limits
-    print("CHECKING BOUNDS: "+str(updatedBounds))
-    print("FOR POSE: "+str(pos))
+    # print("CHECKING BOUNDS: "+str(updatedBounds))
+    # print("FOR POSE: "+str(pos))
     for i in range(len(updatedBounds)):
         if (updatedBounds[i][0] < TCP_LIMIT_LOWER_X
             or updatedBounds[i][0] > TCP_LIMIT_UPPER_X
@@ -198,35 +208,35 @@ def verifyPosition(position):
             or updatedBounds[i][2] < TCP_LIMIT_LOWER_Z
             or updatedBounds[i][2] > TCP_LIMIT_UPPER_Z
             ):
-            print("BOUNDS CHECK FAILED")
+            # print("BOUNDS CHECK FAILED")
             return False
     # for loop ended, NOW we can call success
-    print("BOUNDS CHECK SUCCEEDED")
+    # print("BOUNDS CHECK SUCCEEDED")
     return True
 
 # returns true/false on success/failure
 def safeMove(pos):
     # check arg type
     if type(pos) == pn.JointsPosition or type(pos) == pn.PoseObject:
-        print(f"safeMove: verifying move to\n{pos}")
+        # print(f"safeMove: verifying move to\n{pos}")
         if verifyPosition(pos):
-            print(f"safeMove: move verified, moving to {pos}")
+            # print(f"safeMove: move verified, moving to {pos}")
             #try:
             robot.move(pos)  # re-indent when enabling try/except
             #except pn.api.exceptions.NiryoRobotException as e:
                 #print(f"safeMove() - ERROR: encountered exception in safemove: {e}")
             return True
         else:
-            print(f"safeMove: Move to position {pos} unsafe, discarded")
+            # print(f"safeMove: Move to position {pos} unsafe, discarded")
             return False
     else:
         raise TypeError(f"unsupported type {type(pos)} for safeMove")
 
 # helper function specifically for sending messages to the practable websocket
 # will be used by both the practable thread and arm thread, so should be here
-def sendPractableMessage(message):
+def sendPractableMessage(thread,message):
     if type(message) is not dict:
-        print(f"ERROR IN sendPractableMessage: message {message} is not a dict")
+        addToLogQueue(thread, f"ERROR IN sendPractableMessage: message {message} is not a dict")
         return False
 
     # convert message into sendable format
@@ -234,7 +244,7 @@ def sendPractableMessage(message):
         m = json.dumps(message)
 
     except Exception as e:
-        print(f"ERROR IN sendPractableMessage: dict -> json string conversion failed for message: {message}")
+        addToLogQueue(thread, f"ERROR IN sendPractableMessage: dict -> json string conversion failed for message: {message}")
         return False
     
     try:
@@ -242,17 +252,17 @@ def sendPractableMessage(message):
         return True
     
     except websockets.ConnectionClosed as e:
-        print(f"ERROR IN sendPractableMessage: Practable connection marked as closed.")
+        addToLogQueue(thread, f"ERROR IN sendPractableMessage: Practable connection marked as closed.")
         practableErrorEvent.set()
         return False
 
     # this should never trigger, but check anyway
     except TypeError as e:
-        print(f"ERROR IN sendPractableMessage: Message {message} has invalid type {type(message)}")
+        addToLogQueue(thread, f"ERROR IN sendPractableMessage: Message {message} has invalid type {type(message)}")
         return False
     
     except Exception as e:
-        print(f"ERROR IN sendPractableMessage: Exception: {e}")
+        addToLogQueue(thread, f"ERROR IN sendPractableMessage: Exception: {e}")
         return False
 
 # to be called on first connection after robot is turned off
@@ -263,6 +273,14 @@ def setupRobot():
     robot.open_gripper()
     robot.move(robot.get_home_pose())
     robot.set_home_pose(pn.JointsPosition(0, 0.5, -1.25, 0,0,0))
+
+def addToLogQueue(threadName, message):
+    # format the message correctly
+    m = f"{time.strftime("%Y %d/%m %H:%M:%S",time.gmtime())} - {threadName} - {message}"
+    LOG_QUEUE.put(m)
+
+    # we also print each message so we have a live feed
+    print(m)
 
 # ==================
 # | INITIALISATION |
@@ -302,7 +320,8 @@ def practableThreadFunction():
             
             # wait for an incoming message
             incoming = practable_ws.recv()
-            print(f"{CS_P}recieved message:\n{incoming}")
+            # print(f"{CS_P}recieved message:\n{incoming}")
+            addToLogQueue(CS_P, f"recieved message:\n{incoming}")
 
             # message verification
             # check if json is valid
@@ -310,21 +329,40 @@ def practableThreadFunction():
                 messageJSON = json.loads(incoming)
             except json.decoder.JSONDecodeError:
                 # command was bad json. send a reply stating as such
-                practable_ws.send('{"replyComm":"NOT_SET","result":"fail","displayText":"Error: Invalid command.","message":"ERROR: BAD JSON - FAILED TO DECODE"}')
-                print(f"{CS_P}RECEIVED BAD COMMAND: {messageJSON}")
+                # practable_ws.send('{"replyComm":"NOT_SET","result":"fail","displayText":"Error: Invalid command.","message":"ERROR: BAD JSON - FAILED TO DECODE"}')
+                sendPractableMessage(CS_P, {
+                    "replyComm":"NOT_SET",
+                    "result":"fail",
+                    "displayText":"Error: Invalid command.",
+                    "message":"ERROR: BAD JSON - FAILED TO DECODE"
+                })
+                # print(f"{CS_P}RECEIVED BAD COMMAND: {messageJSON}")
+                addToLogQueue(CS_P, f"RECEIVED BAD COMMAND: {messageJSON}")
                 continue
 
             # json is correct, check if command variable exists
             if "command" not in messageJSON:
-                practable_ws.send('{"replyComm":"NOT_SET","result":"fail","displayText":"Error: Invalid command.","message":"ERROR: COMMAND ATTRIBUTE NOT SET FOR RECIEVED COMMAND"}')
-                print(f"{CS_P}ERROR: COMMAND NOT SET IN INCOMING JSON: {messageJSON}")
+                # practable_ws.send('{"replyComm":"NOT_SET","result":"fail","displayText":"Error: Invalid command.","message":"ERROR: COMMAND ATTRIBUTE NOT SET FOR RECIEVED COMMAND"}')
+                sendPractableMessage(CS_P, {
+                    "replyComm":"NOT_SET",
+                    "result":"fail",
+                    "displayText":"Error: Invalid command.",
+                    "message":"ERROR: COMMAND ATTRIBUTE NOT SET FOR RECIEVED COMMAND"})
+                # print(f"{CS_P}ERROR: COMMAND NOT SET IN INCOMING JSON: {messageJSON}")
+                addToLogQueue(CS_P, f"ERROR: COMMAND NOT SET IN INCOMING JSON: {messageJSON}")
                 continue
 
             # command exists, check if its a real command
             if messageJSON["command"] not in VALID_COMMANDS:
                 # command not present. reply with error
-                practable_ws.send('{"replyComm":"NOT_SET","result":"fail","displayText":"Error: Invalid command.","message":"ERROR: COMMAND ATTRIBUTE VALUE NOT RECOGNISED"}')
-                print(f"{CS_P}ERROR: COMMAND NOT RECOGNISED: {messageJSON}")
+                # practable_ws.send('{"replyComm":"NOT_SET","result":"fail","displayText":"Error: Invalid command.","message":"ERROR: COMMAND ATTRIBUTE VALUE NOT RECOGNISED"}')
+                sendPractableMessage(CS_P, {
+                    "replyComm":"NOT_SET",
+                    "result":"fail",
+                    "displayText":"Error: Invalid command.",
+                    "message":"ERROR: COMMAND ATTRIBUTE VALUE NOT RECOGNISED"})
+                # print(f"{CS_P}ERROR: COMMAND NOT RECOGNISED: {messageJSON}")
+                addToLogQueue(CS_P, f"ERROR: COMMAND NOT RECOGNISED: {messageJSON}")
                 continue
 
             # command is real, check the args
@@ -335,8 +373,14 @@ def practableThreadFunction():
                         typeCorrectArgs[i] = VALID_COMMANDS[messageJSON["command"]][i](messageJSON[i])
                     except:
                         # type mismatch, invalid command
-                        practable_ws.send('{"replyComm":"NOT_SET","result":"fail","displayText":"Error: Invalid command.","message":"ERROR: ARGUMENT TYPE MISMATCH: "'+str(messageJSON[i])+' IS NOT TYPE '+str(VALID_COMMANDS[messageJSON["command"]][i])+'}')
-                        print(f"{CS_P}ERROR: COMMAND TYPE MISMATCH: {messageJSON[i]} IS NOT TYPE {VALID_COMMANDS[messageJSON["command"]][i]}")
+                        # practable_ws.send('{"replyComm":"NOT_SET","result":"fail","displayText":"Error: Invalid command.","message":"ERROR: ARGUMENT TYPE MISMATCH: "'+str(messageJSON[i])+' IS NOT TYPE '+str(VALID_COMMANDS[messageJSON["command"]][i])+'}')
+                        sendPractableMessage(CS_P, {
+                            "replyComm":"NOT_SET",
+                            "result":"fail",
+                            "displayText":"Error: Invalid command.",
+                            "message":f"ERROR: ARGUMENT TYPE MISMATCH: {messageJSON[i]} IS NOT TYPE {VALID_COMMANDS[messageJSON["command"]][i]}"})
+                        # print(f"{CS_P}ERROR: COMMAND TYPE MISMATCH: {messageJSON[i]} IS NOT TYPE {VALID_COMMANDS[messageJSON["command"]][i]}")
+                        addToLogQueue(CS_P, f"{CS_P}ERROR: COMMAND TYPE MISMATCH: {messageJSON[i]} IS NOT TYPE {VALID_COMMANDS[messageJSON["command"]][i]}")
                         break
 
             # need to check again, previous continue just breaks the arg check loop
@@ -360,7 +404,10 @@ def practableThreadFunction():
                         )
                         )
                     )
-                    practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
+                    # practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
+                    sendPractableMessage(CS_P, {
+                        "ACK":messageJSON["command"]
+                    })
 
                 case "move_jp":
                     COMMAND_QUEUE.put(
@@ -375,7 +422,10 @@ def practableThreadFunction():
                             )
                             )
                     )
-                    practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
+                    # practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
+                    sendPractableMessage(CS_P, {
+                        "ACK":messageJSON["command"]
+                    })
 
                 case "update_jog_jp":
                     COMMAND_QUEUE.put(
@@ -390,35 +440,59 @@ def practableThreadFunction():
                             )
                             )
                     )
-                    practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
+                    # practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
+                    sendPractableMessage(CS_P, {
+                        "ACK":messageJSON["command"]
+                    })
 
                 case "gripper_open":
                     COMMAND_QUEUE.put(("gripper_open",None))
-                    practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
+                    # practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
+                    sendPractableMessage(CS_P, {
+                        "ACK":messageJSON["command"]
+                    })
 
                 case "gripper_close":
                     COMMAND_QUEUE.put(("gripper_close",None))
-                    practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
-                    
+                    # practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
+                    sendPractableMessage(CS_P, {
+                        "ACK":messageJSON["command"]
+                    })
+
                 case "gripper_toggle":
                     COMMAND_QUEUE.put(("gripper_toggle",None))
-                    practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
+                    # practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
+                    sendPractableMessage(CS_P, {
+                        "ACK":messageJSON["command"]
+                    })
 
                 case "gripper_control":
                     COMMAND_QUEUE.put(("gripper_control", typeCorrectArgs))
+                    sendPractableMessage(CS_P, {
+                        "ACK":messageJSON["command"]
+                    })
 
                 case "signal":
                     # dont do anything with the command queue, just print to console and log
                     print(f"{CS_P}Signal Recieved: {typeCorrectArgs["text"]}")
-                    practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
+                    # practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
+                    sendPractableMessage(CS_P, {
+                        "ACK":messageJSON["command"]
+                    })
 
                 case "calibrate":
                     COMMAND_QUEUE.put(("calibrate",None))
-                    practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
+                    # practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
+                    sendPractableMessage(CS_P, {
+                        "ACK":messageJSON["command"]
+                    })
 
                 case "go_home":
                     COMMAND_QUEUE.put(("go_home",None))
-                    practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
+                    # practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
+                    sendPractableMessage(CS_P, {
+                        "ACK":messageJSON["command"]
+                    })
 
                 case "mutable_move_tcp":
                     COMMAND_QUEUE.put(
@@ -433,7 +507,10 @@ def practableThreadFunction():
                         )
                         )
                     )
-                    practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
+                    # practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
+                    sendPractableMessage(CS_P, {
+                        "ACK":messageJSON["command"]
+                    })
 
                 case "mutable_move_jp":
                     COMMAND_QUEUE.put(
@@ -448,35 +525,45 @@ def practableThreadFunction():
                             )
                             )
                     )
-                    practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
+                    # practable_ws.send(f'{{"this is": "an acknoledgement"}}')  #FIXME: send an acknoledgement of reciept
+                    sendPractableMessage(CS_P, {
+                        "ACK":messageJSON["command"]
+                    })
 
                 # this should never trigger, should be filtered out by above. check anyway
                 case _:
-                    practable_ws.send('{"replyComm":"NOT_SET","result":"fail","displayText":"Error: Invalid command.","message":"ERROR: COMMAND ATTRIBUTE VALUE NOT RECOGNISED"}')
-                    print(f"{CS_P}congratulations! you did the impossible and triggered the default case in the command match statement! json:\n{messageJSON}")
+                    # practable_ws.send('{"replyComm":"NOT_SET","result":"fail","displayText":"Error: Invalid command.","message":"ERROR: COMMAND ATTRIBUTE VALUE NOT RECOGNISED"}')
+                    sendPractableMessage(CS_P, {
+                        "replyComm":"NOT_SET",
+                        "result":"fail",
+                        "displayText":"Error: Invalid command.",
+                        "message":"ERROR: COMMAND ATTRIBUTE VALUE NOT RECOGNISED"
+                    })
+                    # print(f"{CS_P}congratulations! you did the impossible and triggered the default case in the command match statement! json:\n{messageJSON}")
+                    addToLogQueue(CS_P, f"congratulations! you did the impossible and triggered the default case in the command match statement! json:\n{messageJSON}")
                     continue
 
         # technically we only need to catch ConnectionClosed, but better be safe
-        except (websockets.ConnectionClosedOK, websockets.ConnectionClosedError ,websockets.ConnectionClosed):
+        except (websockets.ConnectionClosedOK, websockets.ConnectionClosedError ,websockets.ConnectionClosed) as e:
             # check for first time connection
-            # if practable_ws is None:
-            #     # dont log anything. remember
-            # else:
-            #     # log a bunch of stuff. its about to get set to None anyway
+            if practable_ws is None:
+                addToLogQueue(CS_P, f"practable websocket is None, making first connection...")
+            else:
+                # log a bunch of stuff. its about to get set to None anyway
+                addToLogQueue(CS_P, f"Practable thread raised {e}. attempting to reconnect...")
 
             # reconnect with the websocket
             # this needs its own while loop and try/except
             practable_ws = None
             while practable_ws is None:
-                for i in range(NO_CONNECTION_ATTEMPTS_PRACTABLE):
-                    try:
-                        practable_ws = connect(PRACTABLE_WEBSOCKET_ADDRESS)
-                        # if this doesn't raise an exception, we will reach this
-                        break
+                try:
+                    practable_ws = connect(PRACTABLE_WEBSOCKET_ADDRESS)
+                    # if this doesn't raise an exception, we will reach this
+                    break
 
-                    # there are too many exception types to handle individually, just do them all
-                    except Exception as e:
-                        pass
+                # there are too many exception types to handle individually, just do them all
+                except Exception as e:
+                    addToLogQueue(CS_P, f"Practable connection attempt raised {e}. retrying...")
 
                 # above only breaks the loop, need to check again
                 if practable_ws is None:
@@ -485,7 +572,8 @@ def practableThreadFunction():
                 # if by here a connection has been made, the loop will exit
 
     # code here runs if the thread is killed
-    print(f"{CS_P}PRACTABLE THREAD KILLED")
+    # print(f"{CS_P}PRACTABLE THREAD KILLED")
+    addToLogQueue(CS_P, f"PRACTABLE THREAD KILLED")
 
 # move this later
 armThreadKillEvent = threading.Event()
@@ -553,7 +641,12 @@ def armThreadFunction():
 
             # we now have the command, lets execute it
             (com, args) = command
-            print(f"{CS_A}executing command: {command}")
+            # print(f"{CS_A}executing command: {command}")
+            addToLogQueue(CS_A, f"begining execution of command: {command}")
+            sendPractableMessage(CS_A, {
+                "executing":com,
+                "state":"In-Progress"
+            })
             # practable_ws.send(f'{{""}}')  # send to signify a command has started execution
             match com:
                 case "move_tcp":
@@ -647,6 +740,7 @@ def armThreadFunction():
                         update = COMMAND_QUEUE.get()
                         if update[0] == "mutable_move_tcp":
                             target = update[1]
+                            addToLogQueue(CS_A, f"Updated mutable_move_tcp target to {target}")
                         else:
                             bufferedCommand = update
 
@@ -659,10 +753,18 @@ def armThreadFunction():
                         update = COMMAND_QUEUE.get()
                         if update[0] == "mutable_move_jp":
                             target = update[1]
+                            addToLogQueue(CS_A, f"Updated mutable_move_jp target to {target}")
                         else:
                             bufferedCommand = update
 
                     robot.move(target)
+
+            # log successful execution
+            addToLogQueue(CS_A, "Command executed successfully")
+            sendPractableMessage(CS_A, {
+                "executing":com,
+                "state":"complete"
+            })
 
             # need to reset command to None
             command = None
@@ -701,7 +803,8 @@ def armThreadFunction():
             command = None
 
             # and do the appropriate logging/printing/replying
-            print(f"{CS_A}NiryoRobotException on command {command}. Details:\n{e}")
+            # print(f"{CS_A}NiryoRobotException on command {command}")
+            addToLogQueue(CS_A, f"NiryoRobotException on command {command}")
 
         # RAISED WHEN:
         #   bad ip address on connection attempt
@@ -729,7 +832,8 @@ def armThreadFunction():
                 while not connectionAttemptEnded.wait(timeout=30):
                     # we are likely hanging indefinitely at this point.
                     # do logging stuff and keep waiting
-                    print(f"{CS_A}CONNECTION THREAD TIMED OUT - LIKELY HANGING INDEFINITELY")
+                    # print(f"{CS_A}CONNECTION THREAD TIMED OUT - LIKELY HANGING INDEFINITELY")
+                    addToLogQueue(CS_A, f"CONNECTION THREAD TIMED OUT - LIKELY HANGING INDEFINITELY")
                     # log stuff here
 
                 # we have triggered the event, now we need to reset it
@@ -738,12 +842,14 @@ def armThreadFunction():
                 # the connection attempt has ended, but it could have encountered an exception
                 if exc is None:
                     # successfully connected
-                    print(f"{CS_A}SUCCESSFULLY CONNECTED TO ARM")
+                    # print(f"{CS_A}SUCCESSFULLY CONNECTED TO ARM")
+                    addToLogQueue(CS_A, f"SUCCESSFULLY CONNECTED TO ARM")
                     setupRobot()
                     break
                 else:
                     # there's an exception, try again in 10 secs
-                    print(f"{CS_A}ARM CONNECTION THREAD ENCOUNTERED EXCEPTION:\n{exc}\n RETRYING IN 10 SECS")
+                    # print(f"{CS_A}ARM CONNECTION THREAD ENCOUNTERED EXCEPTION:\n{exc}\n RETRYING IN 10 SECS")
+                    addToLogQueue(CS_A, f"ARM CONNECTION THREAD ENCOUNTERED EXCEPTION:\n{exc}\n RETRYING IN 10 SECS")
                     time.sleep(10)
 
                     # remember to reset exc
@@ -755,7 +861,8 @@ def armThreadFunction():
         #       this means the connection is permanently deadlocked. Too bad!
         #   HUNG connection disconnected, sometimes (see above)
         except pn.api.exceptions.HostNotReachableException as e:
-            print(f"{CS_A}HostNotReachable RAISED! VERY LIKELY TO HANG! Attempting to reconnect:")
+            # print(f"{CS_A}HostNotReachable RAISED! VERY LIKELY TO HANG! Attempting to reconnect:")
+            addToLogQueue(CS_A, f"HostNotReachable RAISED! VERY LIKELY TO HANG! Attempting to reconnect:")
             
             # the rest is the same as above
 
@@ -772,7 +879,8 @@ def armThreadFunction():
                 while not connectionAttemptEnded.wait(timeout=30):
                     # we are likely hanging indefinitely at this point.
                     # do logging stuff and keep waiting
-                    print(f"{CS_A}CONNECTION THREAD TIMED OUT - LIKELY HANGING INDEFINITELY")
+                    # print(f"{CS_A}CONNECTION THREAD TIMED OUT - LIKELY HANGING INDEFINITELY")
+                    addToLogQueue(CS_A, f"CONNECTION THREAD TIMED OUT - LIKELY HANGING INDEFINITELY")
                     # log stuff here
                 
                 # we have triggered the event, now we need to reset it
@@ -782,11 +890,13 @@ def armThreadFunction():
                 if exc is None:
                     # successfully connected
                     print(f"{CS_A}SUCCESSFULLY CONNECTED TO ARM")
+                    addToLogQueue(CS_A, f"SUCCESSFULLY CONNECTED TO ARM")
                     setupRobot()
                     break
                 else:
                     # there's an exception, try again in 10 secs
-                    print(f"{CS_A}ARM CONNECTION THREAD ENCOUNTERED EXCEPTION:\n{exc}\n RETRYING IN 10 SECS")
+                    # print(f"{CS_A}ARM CONNECTION THREAD ENCOUNTERED EXCEPTION:\n{exc}\n RETRYING IN 10 SECS")
+                    addToLogQueue(CS_A, f"ARM CONNECTION THREAD ENCOUNTERED EXCEPTION:\n{exc}\n RETRYING IN 10 SECS")
                     time.sleep(10)
 
                     # remember to reset exc
@@ -798,11 +908,13 @@ def armThreadFunction():
         #   currently unknown. susptected to be internal only.
         #   added for posterity and in case it triggers
         except pn.api.exceptions.TcpCommandException as e:
-            print(f"{CS_A}TcpCommandException {e} encountered. HOW DID THIS HAPPEN?")
+            # print(f"{CS_A}TcpCommandException {e} encountered. HOW DID THIS HAPPEN?")
+            addToLogQueue(CS_A, f"TcpCommandException {e} encountered. HOW DID THIS HAPPEN?")
             pass
 
     # code here runs if the thread is killed
-    print(f"{CS_A}ARM THREAD KILLED")
+    # print(f"{CS_A}ARM THREAD KILLED")
+    addToLogQueue(CS_A, f"ARM THREAD KILLED")
 
 
 
@@ -817,6 +929,13 @@ practableThread.start()
 armThread = threading.Thread(target=armThreadFunction, args=[])
 armThread.start()
 
+# LOG SETUP TODO try catch
+# check log directory exists, make if not
+if not os.path.exists(LOG_DIRECTORY):
+    os.makedirs(LOG_DIRECTORY)
+
+# create logfile and write header
+logFileName = os.path.join(LOG_DIRECTORY, f"LOG {time.time_ns()}.txt")
 
 # need to do SOMETHING with the main thread, otherwise we just instantly close
 while True:
@@ -824,9 +943,24 @@ while True:
     # main maintainance loop
     # check health of other threads
     if not practableThread.is_alive():
+        # print(f"{CS_M}PRACTABLE THREAD DEAD - RESTARTING...")
+        addToLogQueue(CS_M, f"PRACTABLE THREAD DEAD - RESTARTING...")
         practableThread = threading.Thread(target=practableThreadFunction, args=[])
         practableThread.start()
+        # print(f"{CS_M}PRACTABLE THREAD RESTARTED")
+        addToLogQueue(CS_M, f"PRACTABLE THREAD RESTARTED")
+        
 
     if not armThread.is_alive():
+        # print(f"{CS_M}ARM THREAD DEAD - RESTARTING...")
+        addToLogQueue(CS_M, f"ARM THREAD DEAD - RESTARTED")
         armThread = threading.Thread(target=armThreadFunction, args=[])
         armThread.start()
+        # print(f"{CS_M}ARM THREAD RESTARTED")
+        addToLogQueue(CS_M, f"ARM THREAD RESTARTED")
+
+    # write everything in log queue to log file
+    with open(logFileName, "at") as logFile:
+        while LOG_QUEUE.qsize() > 0:
+            l = LOG_QUEUE.get()
+            logFile.write(l)
