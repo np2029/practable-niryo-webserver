@@ -654,7 +654,7 @@ def armThreadFunction():
                     addToLogQueue(CS_A, f"Command {command} has been hanging for {time.time()-commandStartTime} seconds")
             
             commandExecuted.clear()
-            addToLogQueue(CS_A, f"Command {command} completed in {time.time()-commandStartTime} seconds")
+            addToLogQueue(CS_A, f"Command completed in {time.time()-commandStartTime} seconds")
 
     # just in case
     commandStarted.clear()
@@ -829,7 +829,7 @@ def armThreadFunction():
                     robot.move(robot.get_home_pose())
 
             # log successful execution
-            addToLogQueue(CS_A, "Command executed successfully")
+            # addToLogQueue(CS_A, "Command executed successfully")
             sendPractableMessage(CS_A, {
                 "executing":com,
                 "state":"complete"
