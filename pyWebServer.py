@@ -121,7 +121,10 @@ VALID_COMMANDS = {
         "j3":float,
         "j4":float,
         "j5":float
-    }
+    },
+    # NOTE: this command is intended for internal use only.
+    # It will execute fine if it is recieved, but it should not be made available
+    "idle":{}
 }
 
 # global command queue
@@ -530,6 +533,12 @@ def practableThreadFunction():
                         "ACK":messageJSON["command"]
                     })
 
+                case "idle":
+                    COMMAND_QUEUE.put(("idle", None))
+                    sendPractableMessage(CS_P, {
+                        "ACK":messageJSON["command"]
+                    })
+
                 # this should never trigger, should be filtered out by above. check anyway
                 case _:
                     # practable_ws.send('{"replyComm":"NOT_SET","result":"fail","displayText":"Error: Invalid command.","message":"ERROR: COMMAND ATTRIBUTE VALUE NOT RECOGNISED"}')
@@ -608,6 +617,56 @@ def armThreadFunction():
         finally:
             connectionAttemptEnded.set()
 
+    # for the watcher function
+    # need 2 to avoid busy waiting
+    commandStarted = threading.Event()
+    commandExecuted = threading.Event()
+
+    commandStartTime = None
+
+    # we need a thread to see if any of the arm function calls hang
+    def armWatcherFunction():
+        while True:
+            if not commandStarted.wait(timeout=300):
+                # reset to base pose if no commands recieved after long time
+                addToLogQueue(CS_A, f"No commands detected for 5 minutes, inserting idle command")
+                COMMAND_QUEUE.put("idle",None)
+                commandStarted.wait()
+            commandStarted.clear()
+            commandStartTime = time.time()
+
+            # special case for calibration. No other command should take longer than 10s
+            if command is not None and command[0] == "calibrate":
+                t = 30
+            else:
+                t = 10
+
+            # check if command times out
+            if not commandExecuted.wait(timeout=t):
+                # things to be done ONCE per timed out command
+                addToLogQueue(CS_A, f"ERROR: Command {command} hanging! Network connection is unstable")
+                sendPractableMessage(CS_A, {
+                    "status":"hanging"#FIXME: make better once UI is more final
+                })
+
+                while not commandExecuted.wait(timeout=30):
+                    # things to be done every so often while current command is hanging
+                    addToLogQueue(CS_A, f"Command {command} has been hanging for {time.time()-commandStartTime} seconds")
+            
+            commandExecuted.clear()
+            addToLogQueue(CS_A, f"Command {command} completed in {time.time()-commandStartTime} seconds")
+
+    # just in case
+    commandStarted.clear()
+    commandExecuted.clear()
+
+    # setup watcher thread if it doesnt exist already
+    # TODO: bugfix if the main arm thread dies but the watcher doesn't
+    armWatcherThread = threading.Thread(target=armWatcherFunction, args=[])
+    armWatcherThread.daemon = True
+    armWatcherThread.start()
+
+
     while not armThreadKillEvent.is_set():
         try:
             # check connection exists
@@ -648,6 +707,10 @@ def armThreadFunction():
                 "executing":com,
                 "state":"In-Progress"
             })
+
+            # for watcher thread
+            commandStarted.set()
+
             # practable_ws.send(f'{{""}}')  # send to signify a command has started execution
             match com:
                 case "move_tcp":
@@ -760,6 +823,11 @@ def armThreadFunction():
 
                     robot.move(target)
 
+                case "idle":
+                    # behaviour when no commands are recieved for an extended period
+                    # right now, just go home
+                    robot.move(robot.get_home_pose())
+
             # log successful execution
             addToLogQueue(CS_A, "Command executed successfully")
             sendPractableMessage(CS_A, {
@@ -769,6 +837,9 @@ def armThreadFunction():
 
             # need to reset command to None
             command = None
+
+            # and notify watcher
+            commandExecuted.set()
 
         # main exceptions 
 
