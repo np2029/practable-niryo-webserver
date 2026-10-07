@@ -276,7 +276,7 @@ def setupRobot():
 
 def addToLogQueue(threadName, message):
     # format the message correctly
-    m = f"{time.strftime("%Y %d/%m %H:%M:%S",time.gmtime())} - {threadName} - {message}"
+    m = f"{time.strftime("%Y %d/%m %H:%M:%S",time.gmtime())} - {threadName} - {message}\n"
     LOG_QUEUE.put(m)
 
     # we also print each message so we have a live feed
@@ -616,8 +616,9 @@ def armThreadFunction():
                 raise pn.api.exceptions.ClientNotConnectedException("robot is None")
 
             # calibrate if needed
-            if robot.need_calibration:
+            if robot.need_calibration():
                 robot.calibrate_auto()
+                time.sleep(1)
 
             # check for collision
             if robot.collision_detected:
@@ -798,13 +799,12 @@ def armThreadFunction():
         # RAISED WHEN:
         #   bad command (move with invalid coords etc)
         except pn.api.exceptions.NiryoRobotException as e:
+            addToLogQueue(CS_A, f"NiryoRobotException on command {command}. Command skipped")
+
             # in this case, nothing is wrong connection wise
             # we simply need to skip the last command
             command = None
 
-            # and do the appropriate logging/printing/replying
-            # print(f"{CS_A}NiryoRobotException on command {command}")
-            addToLogQueue(CS_A, f"NiryoRobotException on command {command}")
 
         # RAISED WHEN:
         #   bad ip address on connection attempt
@@ -815,6 +815,7 @@ def armThreadFunction():
         #   the robot is turned off
         #   QUEUED connection disconnected, sometimes (see above)
         except pn.api.exceptions.ClientNotConnectedException as e:
+            addToLogQueue(CS_A, f"ClientNotConnectedException encountered on command {command}. Attempting to reconnect...")
             # in this case, we need to attempt to re-connect to the arm
             # every time you try to connect to the arm, there is a chance the process will hang
             # therefore, we use another temporary thread to attempt the connection
