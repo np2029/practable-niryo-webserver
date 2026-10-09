@@ -633,6 +633,7 @@ def practableThreadFunction():
                     logEvent(CS_P, LogEvents.PRACTABLE_CONNECTION_ATTEMPT, PRACTABLE_WEBSOCKET_ADDRESS, f"Attempting to connect to practable address {PRACTABLE_WEBSOCKET_ADDRESS}")
                     practable_ws = connect(PRACTABLE_WEBSOCKET_ADDRESS)
                     # if this doesn't raise an exception, we will reach this
+                    logEvent(CS_P, LogEvents.PRACTABLE_CONNECTION_SUCCESS, "", f"Practable thread successfuly connected to websocket {practable_ws}")
                     break
 
                 # there are too many exception types to handle individually, just do them all
@@ -645,7 +646,7 @@ def practableThreadFunction():
                     sleep(CONNECTION_ATTEMPT_COOLDOWN_PRACTABLE)
 
                 # if by here a connection has been made, the loop will exit
-                logEvent(CS_P, LogEvents.PRACTABLE_CONNECTION_SUCCESS, "", f"Practable thread successfuly connected to websocket")
+                logEvent(CS_P, LogEvents.PRACTABLE_CONNECTION_SUCCESS, "", f"Practable thread successfuly connected to websocket {practable_ws}")
 
     # code here runs if the thread is killed
     # print(f"{CS_P}PRACTABLE THREAD KILLED")
@@ -702,8 +703,11 @@ def armThreadFunction():
             commandStarted.clear()
             commandStartTime = time.time()
 
+            # make a local copy of the command to remove race condition
+            localCommand = command
+
             # special case for calibration. No other command should take longer than 10s
-            if command is not None and command[0] == "calibrate":
+            if localCommand is not None and localCommand[0] == "calibrate":
                 t = 30
             else:
                 t = 10
@@ -712,7 +716,7 @@ def armThreadFunction():
             if not commandExecuted.wait(timeout=t):
                 # things to be done ONCE per timed out command
                 # addToLogQueue(CS_A, f"ERROR: Command {command} hanging! Network connection is unstable")
-                logEvent(CS_A, LogEvents.ARM_COMMAND_TIMEOUT, command, f"ERROR: Command {command} hanging! Network connection likely dead!")
+                logEvent(CS_A, LogEvents.ARM_COMMAND_TIMEOUT, localCommand, f"ERROR: Command {localCommand} hanging! Network connection likely dead!")
                 sendPractableMessage(CS_A, {
                     "status":"hanging"#FIXME: make better once UI is more final
                 })
@@ -721,15 +725,15 @@ def armThreadFunction():
                     # things to be done every so often while current command is hanging
                     t = time.time()-commandStartTime
                     # addToLogQueue(CS_A, f"Command {command} has been hanging for {t} seconds")
-                    logEvent(CS_A, LogEvents.ARM_COMMAND_TIMEOUT_UPDATE, t, f"Command {command} has been hanging for {t} seconds")
+                    logEvent(CS_A, LogEvents.ARM_COMMAND_TIMEOUT_UPDATE, t, f"Command {localCommand} has been hanging for {t} seconds")
             
             commandExecuted.clear()
             t = time.time()-commandStartTime
             # addToLogQueue(CS_A, f"Command {command} completed in {t} seconds")
-            logEvent(CS_A, LogEvents.ARM_COMMAND_COMPLETED, f"{command =}, time = {t}", f"Command {command} completed in {t} seconds")
+            logEvent(CS_A, LogEvents.ARM_COMMAND_COMPLETED, f"command: {localCommand}, time: {t}", f"Command {localCommand} completed in {t} seconds")
 
             # special case for idle commands. we wait here until next command
-            if command[0] == "idle":
+            if localCommand[0] == "idle":
                 commandStarted.wait()
 
     # just in case
