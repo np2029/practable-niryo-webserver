@@ -697,7 +697,7 @@ def armThreadFunction():
                 # reset to base pose if no commands recieved after long time
                 # addToLogQueue(CS_A, f"No commands detected for 5 minutes, inserting idle command")
                 logEvent(CS_A, LogEvents.ARM_IDLE, "300", f"No commands detected for 5 minutes, inserting idle command")
-                COMMAND_QUEUE.put("idle",None)
+                COMMAND_QUEUE.put(("idle",None))
                 commandStarted.wait()
             commandStarted.clear()
             commandStartTime = time.time()
