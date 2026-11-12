@@ -24,6 +24,14 @@ import websockets
 from websockets.sync.client import connect
 from scipy.spatial.transform import Rotation as R
 
+
+# import the custom robotic manipulator class used for collision detection
+from roboticManipulator import RoboticManipulator
+from roboticManipulator import Collider
+from roboticManipulator import AlignedCuboidCollider
+from roboticManipulator import CuboidCollider
+from roboticManipulator import SphereCollider
+
 # =============
 # | CONSTANTS |
 # =============
@@ -196,6 +204,276 @@ class LogEvents(Enum):
 # ===========
 # | CLASSES |
 # ===========
+
+
+
+
+# =============================
+# | COLLISION DETECTION SETUP |
+# =============================
+# need to build the joints first
+JOINT_BASE = RoboticManipulator.Joint(
+    0, 0, 0, # offsets
+    0, 0, 0, # rotation
+    None,
+    angle=0,
+    name="Base"
+)
+
+JOINT_SHOULDER = RoboticManipulator.Joint(
+    0, 0, 0.1013, # offsets
+    0, 0, 0, # rotation
+    RoboticManipulator.AXIS_Z,
+    angle=0, 
+    parentJoint=JOINT_BASE, 
+    upperLimit=2.949, 
+    lowerLimit=-2.949,
+    name="Shoulder"
+)
+
+JOINT_ARM = RoboticManipulator.Joint(
+    0, 0, 0.065, # offsets
+    np.pi/2, 0, 0, # rotation
+    RoboticManipulator.AXIS_Z,
+    angle=0, 
+    parentJoint=JOINT_SHOULDER, 
+    upperLimit=0.61, 
+    lowerLimit=-1.83,
+    name="Arm"
+)
+
+JOINT_ELBOW = RoboticManipulator.Joint(
+    0.012, 0.221, 0, # offsets
+    0, 0, np.pi/2, # rotation
+    RoboticManipulator.AXIS_Z,
+    angle=0, 
+    parentJoint=JOINT_ARM, 
+    upperLimit=1.57, 
+    lowerLimit=-1.34,
+    name="Elbow"
+)
+
+JOINT_FOREARM = RoboticManipulator.Joint(
+    0.0325, -0.065, 0, # offsets
+    np.pi/2, 0, 0, # rotation
+    RoboticManipulator.AXIS_Z,
+    angle=0, 
+    parentJoint=JOINT_ELBOW, 
+    upperLimit=2.089,
+    lowerLimit=-2.089,
+    name="Forearm"
+)
+
+JOINT_WRIST = RoboticManipulator.Joint(
+    0, 0, 0.17, # offsets
+    -np.pi/2, 0, 0, # rotation
+    RoboticManipulator.AXIS_Z,
+    angle=0, 
+    parentJoint=JOINT_FOREARM, 
+    upperLimit=1.922,
+    lowerLimit=-1.919,
+    name="Wrist"
+)
+
+JOINT_HAND = RoboticManipulator.Joint(
+    0.00925, -0.0197, 0, # offsets
+    np.pi/2, 0, 0, # rotation
+    RoboticManipulator.AXIS_Z,
+    angle=0, 
+    parentJoint=JOINT_WRIST, 
+    upperLimit=2.53,
+    lowerLimit=-2.53,
+    name="Hand"
+)
+
+JOINT_GRIPPER = RoboticManipulator.Joint(
+    0, 0, 0.01016, # offsets
+    0, 0, 0, # rotation
+    None,
+    angle=0, 
+    parentJoint=JOINT_HAND, 
+    upperLimit=2.53,
+    lowerLimit=-2.53,
+    name="Gripper"
+)
+
+# now we make the links
+LINK_BASE_SHOULDER = RoboticManipulator.Link(parentJoint=JOINT_BASE, name="Base -> Shoulder Link")
+LINK_SHOULDER_ARM = RoboticManipulator.Link(parentJoint=JOINT_SHOULDER, name="Shoulder -> Arm Link")
+LINK_ARM_ELBOW = RoboticManipulator.Link(parentJoint=JOINT_ARM, name="Arm -> Elbow Link")
+LINK_ELBOW_FOREARM = RoboticManipulator.Link(parentJoint=JOINT_ELBOW, name="Elbow -> Forearm Link")
+LINK_FOREARM_WRIST = RoboticManipulator.Link(parentJoint=JOINT_FOREARM, name="Forearm -> Wrist Link")
+LINK_WRIST_HAND = RoboticManipulator.Link(parentJoint=JOINT_WRIST, name="Wrist -> Hand Link")
+LINK_HAND_GIRPPER = RoboticManipulator.Link(parentJoint=JOINT_HAND, name="Hand -> Gripper Link")
+LINK_GRIPPER = RoboticManipulator.Link(parentJoint=JOINT_GRIPPER, name="Gripper Actual Link")
+
+# and now the colliders
+LINK_BASE_SHOULDER.add_collider([
+    AlignedCuboidCollider(
+        (0, 0, 0.0448), # origin
+        0.198, 0.198, 0.081, # x,y,z size
+        name="base - main section"
+    ),
+    AlignedCuboidCollider(
+        (0, 0, 0.093885), # origin
+        0.159987, 0.159987, 0.015414, # x,y,z size
+        name="base - LED ring"
+    ),
+])
+
+LINK_SHOULDER_ARM.add_collider([
+    CuboidCollider(
+        (0.999951-1, -0.0001, 0.057294), # origin
+        0.096747, 0.1148, 0.114589, # x,y,z size
+        0, 0, 0, # x,y,z rotation
+        name="shoulder - main joint"
+    ),
+    CuboidCollider(
+        (0.921189-1, 0.012574, 0.026108), # origin
+        0.060777, 0.120253, 0.053785, # x,y,z size
+        0, 0, 0, # x,y,z rotation
+        name="shoulder - motor box"
+    )
+])
+
+LINK_ARM_ELBOW.add_collider([
+    # rotation:
+    # x -> x
+    # y -> -z
+    # z -> y
+    CuboidCollider(
+        (2-2, 0.077342, -0), # origin
+        0.05264, 0.105281, 0.05264,# x,y,z size
+        0, 0, 0, # x,y,z rotation
+        name="arm - connecting box"
+    ),
+    CuboidCollider(
+        (2-2, 0.14469, -0), # origin
+        0.064, 0.06402, 0.101, # x,y,z size
+        0, 0, 0, # x,y,z rotation
+        name="arm - mid box"
+    ),
+    CuboidCollider(
+        (2.00015-2, 0.154575, -0.06035), # origin
+        0.0423, 0.05285, 0.0197, # x,y,z size
+        0, 0, 0, # x,y,z rotation
+        name="arm - side box"
+    ),
+    CuboidCollider(
+        (2.0125-2, 0.2207, -0), # origin
+        0.088, 0.088, 0.101, # x,y,z size
+        0, 0, 0, # x,y,z rotation
+        name="arm - top box"
+    ),
+])
+
+LINK_ELBOW_FOREARM.add_collider([
+    # rotation:
+    # x -> -y
+    # y -> -z
+    # z -> x
+    CuboidCollider(
+        (0.037725, -(3.00788-3), -0), # origin
+        0.06005, 0.07777, 0.062, # x,y,z size
+        0, 0, 0, # x,y,z rotation
+        name="elbow"
+    ),
+])
+
+LINK_FOREARM_WRIST.add_collider([
+    # rotation:
+    # x -> z
+    # y -> -y
+    # z -> x
+    CuboidCollider(
+        (-0.000218, 0, 4.00341-4), # origin
+        0.057091, 0.06, 0.043388, # x,y,z size
+        0, 0, 0, # x,y,z rotation
+        name="forearm - socket"
+    ),
+    CuboidCollider(
+        (0.0002, 0, 4.048-4), # origin
+        0.04, 0.04, 0.047896, # x,y,z size
+        0, 0, 0, # x,y,z rotation
+        name="forearm - bridge"
+    ),
+    CuboidCollider(
+        (0, 0, 4.13231-4), # origin
+        0.05, 0.06, 0.125736, # x,y,z size
+        0, 0, 0, # x,y,z rotation
+        name="forearm - main"
+    ),
+    CuboidCollider(
+        (0, 0.045, 4.158-4), # origin
+        0.0285, 0.03, 0.0465, # x,y,z size
+        0, 0, 0, # x,y,z rotation
+        name="forearm - side"
+    ),
+])
+
+LINK_WRIST_HAND.add_collider([
+    # rotation:
+    # x -> -y
+    # y -> -z
+    # z -> x
+    CuboidCollider(
+        (0, -(4.981-5), 0), # origin
+        0.036, 0.06, 0.03, # x,y,z size
+        0, 0, 0, # x,y,z rotation
+        name="wrist"
+    ),
+])
+
+LINK_HAND_GIRPPER.add_collider([
+    # rotation:
+    # x -> z
+    # y -> -y
+    # z -> x
+    CuboidCollider(
+        (-0.00005, 0, 6.0113-6), # origin
+        0.02, 0.02, 0.035, # x,y,z size
+        0, 0, 0, # x,y,z rotation
+        name="hand"
+    ),
+])
+
+LINK_GRIPPER.add_collider([
+    # rotation:
+    # x -> z
+    # y -> -y
+    # z -> x
+    CuboidCollider(
+        (-0.00025, 0, 7.0616-7), # origin
+        0.0235, 0.076999, 0.085355, # x,y,z size
+        0, 0, 0, # x,y,z rotation
+        name="gripper - main"
+    ), 
+    CuboidCollider(
+        (0.014912, -0.000219, 7.04175-7), # origin
+        0.006823, 0.082321, 0.024491, # x,y,z size
+        0, 0, 0, # x,y,z rotation
+        name="gripper - upper"
+    ), 
+    CuboidCollider(
+        (-0.0165, 0.0075, 7.04-7), # origin
+        0.009, 0.034, 0.02, # x,y,z size
+        0, 0, 0, # x,y,z rotation
+        name="gripper - lower"
+    ),
+])
+
+# and finally declare the arm!
+RM = RoboticManipulator([
+    JOINT_BASE,
+    JOINT_SHOULDER,
+    JOINT_ARM,
+    JOINT_ELBOW,
+    JOINT_FOREARM,
+    JOINT_WRIST,
+    JOINT_HAND,
+    JOINT_GRIPPER,
+])
+
 
 
 # ====================
