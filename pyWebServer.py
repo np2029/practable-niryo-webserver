@@ -498,6 +498,8 @@ ENVIRONMENTAL_COLLIDERS = [
 # testing colliders:
 # one placed slightly forward of the default home pose.
 # test by moving forward 0.2 
+# test with the following command:
+# {"command":"mutable_move_tcp", "x":"0.4", "y":"0.0", "z":"0.15", "roll":"0.0", "pitch":"0.0", "yaw":"0.0"}
 AlignedCuboidCollider(
     (0.4, 0, 0.15),
     0.1, 0.1, 0.1,
@@ -725,7 +727,7 @@ def practableThreadFunction():
                     "message":"ERROR: COMMAND ATTRIBUTE NOT SET FOR RECIEVED COMMAND"})
                 # print(f"{CS_P}ERROR: COMMAND NOT SET IN INCOMING JSON: {messageJSON}")
                 # addToLogQueue(CS_P, f"ERROR: COMMAND NOT SET IN INCOMING JSON: {messageJSON}")
-                logEvent(CS_P, LogEvents.PRACTABLE_ERROR_BAD_PACKET, {messageJSON}, f"ERROR: COMMAND NOT SET IN INCOMING JSON: {messageJSON}")
+                logEvent(CS_P, LogEvents.PRACTABLE_ERROR_BAD_PACKET, messageJSON, f"ERROR: COMMAND NOT SET IN INCOMING JSON: {messageJSON}")
                 continue
 
             # command exists, check if its a real command
@@ -739,7 +741,7 @@ def practableThreadFunction():
                     "message":"ERROR: COMMAND ATTRIBUTE VALUE NOT RECOGNISED"})
                 # print(f"{CS_P}ERROR: COMMAND NOT RECOGNISED: {messageJSON}")
                 # addToLogQueue(CS_P, f"ERROR: COMMAND NOT RECOGNISED: {messageJSON}")
-                logEvent(CS_P, LogEvents.PRACTABLE_ERROR_BAD_PACKET, {messageJSON}, f"ERROR: COMMAND NOT RECOGNISED: {messageJSON}")
+                logEvent(CS_P, LogEvents.PRACTABLE_ERROR_BAD_PACKET, messageJSON, f"ERROR: COMMAND NOT RECOGNISED: {messageJSON}")
                 continue
 
             # command is real, check the args
@@ -925,7 +927,7 @@ def practableThreadFunction():
                     })
                     # print(f"{CS_P}congratulations! you did the impossible and triggered the default case in the command match statement! json:\n{messageJSON}")
                     # addToLogQueue(CS_P, f"congratulations! you did the impossible and triggered the default case in the command match statement! json:\n{messageJSON}")
-                    logEvent(CS_P, LogEvents.PRACTABLE_ERROR_BAD_PACKET, {messageJSON}, f"congratulations! you did the impossible and triggered the default case in the command match statement! json:\n{messageJSON}")
+                    logEvent(CS_P, LogEvents.PRACTABLE_ERROR_BAD_PACKET, messageJSON, f"congratulations! you did the impossible and triggered the default case in the command match statement! json:\n{messageJSON}")
                     continue
 
         # technically we only need to catch ConnectionClosed, but better be safe
@@ -1204,7 +1206,7 @@ def armThreadFunction():
                         else:
                             bufferedCommand = update
 
-                    robot.move(target)
+                    safeMove(target)
 
                 case "mutable_move_jp":
                     target = args
@@ -1218,7 +1220,7 @@ def armThreadFunction():
                         else:
                             bufferedCommand = update
 
-                    robot.move(target)
+                    safeMove(target)
 
                 case "idle":
                     # behaviour when no commands are recieved for an extended period
