@@ -203,6 +203,10 @@ class LogEvents(Enum):
     EXCEPTION_PRACTABLE = "EXCEPTION_PRACTABLE"
     EXCEPTION_ARM = "EXCEPTION_ARM"
 
+    # movement verification
+    MOVEMENT_VERIFY_SUCCESS = "MOVEMENT_VERIFY_SUCCESS"
+    MOVEMENT_VERIFY_FAIL = "MOVEMENT_VERIFY_FAIL"
+
 
 # ===========
 # | CLASSES |
@@ -576,6 +580,8 @@ def verifyPosition(position):
     return not RM.check_collisions(ENVIRONMENTAL_COLLIDERS)
 
 # returns true/false on success/failure
+# NOTE: safeMove is currently only ever ran by the armThread, 
+# so we presume thats the thread calling it in the log entries
 def safeMove(pos):
     # check arg type
     if type(pos) == pn.JointsPosition or type(pos) == pn.PoseObject:
@@ -585,12 +591,15 @@ def safeMove(pos):
             #try:
             robot.move(pos)  # re-indent when enabling try/except
             #except pn.api.exceptions.NiryoRobotException as e:
-                #print(f"safeMove() - ERROR: encountered exception in safemove: {e}")
+                #print(f"safeMove() - ERROR: encountered exception in safemove: {e}") 
+            logEvent(CS_A, LogEvents.MOVEMENT_VERIFY_SUCCESS, pos, f"Move to position {pos} valid")
             return True
         else:
             # print(f"safeMove: Move to position {pos} unsafe, discarded")
+            logEvent(CS_A, LogEvents.MOVEMENT_VERIFY_FAIL, pos, f"Move to position {pos} Invalid")
             return False
     else:
+        logEvent(CS_A, LogEvents.EXCEPTION_GENERAL, pos, f"unsupported type {type(pos)} for safeMove")
         raise TypeError(f"unsupported type {type(pos)} for safeMove")
 
 # helper function specifically for sending messages to the practable websocket
