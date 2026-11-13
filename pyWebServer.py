@@ -67,6 +67,9 @@ TCP_LIMIT_LOWER_X = -0.490
 TCP_LIMIT_UPPER_Y = 0.490
 TCP_LIMIT_LOWER_Y = -0.490
 
+# NOTE: the bottom collider of the arm sits at z = 0.0043
+# If the lower limit is set higher than this, it will always fail if that collider exists
+# as the base colliders are static, you can safely remove them during real use
 TCP_LIMIT_UPPER_Z = 0.490
 TCP_LIMIT_LOWER_Z = 0.0005 # 0 is barely safe on a flat table. Recomend >= 0.0005
 
@@ -475,6 +478,22 @@ RM = RoboticManipulator([
 ])
 
 
+# ===========================
+# | ENVIRONMENTAL COLLIDERS |
+# ===========================
+# TODO: get this from a config/setup file
+ENVIRONMENTAL_COLLIDERS = [
+# testing colliders:
+# one placed slightly forward of the default home pose.
+# test by moving forward 0.2 
+AlignedCuboidCollider(
+    (0.4, 0, 0.15),
+    0.1, 0.1, 0.1,
+    name="Testing Collider - Forward",
+)
+]
+
+
 
 # ====================
 # | HELPER FUNCTIONS |
@@ -486,56 +505,57 @@ RM = RoboticManipulator([
 # accepts JointPosition or PoseObject objects
 # FIXME: this needs to check for custom areas
 def verifyPosition(position):
-    # check type of pos.
+    # check type of position. Need joint angles, so we need a JointsPosition
     # make a new object to not mutate the supplied one
-    if type(position) == pn.JointsPosition:
-        pos = robot.forward_kinematics(position)
-    elif type(position) == pn.PoseObject:
+    if type(position) == pn.PoseObject:
+        pos = robot.inverse_kinematics(position)
+    elif type(position) == pn.JointsPosition:
         pos = position
     else:
         # incorrect object given
         raise TypeError(f"unsupported type {type(position)} for verifyPosition")
 
-    # must be correct type past this point
-    # print("verifyPosition: GOT PASSED TYPE CHECK")
-    # 1: calculate bounds of the physical gripper from the tcp position
-    GRIPPER_WIDTH = 0.08# meters, 80mm
-    GRIPPER_HEIGHT = 0.028# meters, 28mm
-    gripperBounds = np.array([
-        [0,GRIPPER_WIDTH/2,GRIPPER_HEIGHT/2],
-        [0,-GRIPPER_WIDTH/2,GRIPPER_HEIGHT/2],
-        [0,-GRIPPER_WIDTH/2,-GRIPPER_HEIGHT/2],
-        [0,GRIPPER_WIDTH/2,-GRIPPER_HEIGHT/2]
-    ])
+    # we need to check 2 things:
+    # 1: the hard TCP bounds limits
+    # 2: the environmental colliders
 
-    # apply roll, pitch, and yaw to bounds
-    rot =  R.from_euler("xyz", [pos.roll, pos.pitch, pos.yaw], degrees=False)
-    updatedBounds = rot.apply(gripperBounds)
+    # to do both, we need the verts of every joint on the arm
+    vertList = RM.get_verts()
+    armColliders = RM.get_colliders()
 
-    # add tcp x,y,z as offsets to get real coords
-    for i in range(len(updatedBounds)):
-        updatedBounds[i][0] += pos.x
-        updatedBounds[i][1] += pos.y
-        updatedBounds[i][2] += pos.z
+    # check TCP bounds first because its quicker
+    # also because its quicker, we can check the bounding spheres first
+    for c in armColliders:
+        cpos = c.get_position
+        if (
+           cpos[0] + c.get_bounding_sphere_radius() > TCP_LIMIT_UPPER_X
+        or cpos[0] - c.get_bounding_sphere_radius() < TCP_LIMIT_LOWER_X
 
-    # 2: check the verts of the bounding box against the tcp limits
-    # print("CHECKING BOUNDS: "+str(updatedBounds))
-    # print("FOR POSE: "+str(pos))
-    for i in range(len(updatedBounds)):
-        if (updatedBounds[i][0] < TCP_LIMIT_LOWER_X
-            or updatedBounds[i][0] > TCP_LIMIT_UPPER_X
+        or cpos[1] + c.get_bounding_sphere_radius() > TCP_LIMIT_UPPER_Y
+        or cpos[1] - c.get_bounding_sphere_radius() < TCP_LIMIT_LOWER_Y
 
-            or updatedBounds[i][1] < TCP_LIMIT_LOWER_Y
-            or updatedBounds[i][1] > TCP_LIMIT_UPPER_Y
+        or cpos[2] + c.get_bounding_sphere_radius() > TCP_LIMIT_UPPER_Z
+        or cpos[2] - c.get_bounding_sphere_radius() < TCP_LIMIT_LOWER_Z
+        ):
+            # collider *might* be exceeding the TCP limits. check vertex by vertex
+            for v in c.get_verts():
+                if (
+                       v[0] > TCP_LIMIT_UPPER_X
+                    or v[0] < TCP_LIMIT_LOWER_X
 
-            or updatedBounds[i][2] < TCP_LIMIT_LOWER_Z
-            or updatedBounds[i][2] > TCP_LIMIT_UPPER_Z
-            ):
-            # print("BOUNDS CHECK FAILED")
-            return False
-    # for loop ended, NOW we can call success
-    # print("BOUNDS CHECK SUCCEEDED")
-    return True
+                    or v[1] > TCP_LIMIT_UPPER_Y
+                    or v[1] < TCP_LIMIT_LOWER_Y
+
+                    or v[2] > TCP_LIMIT_UPPER_Z
+                    or v[2] < TCP_LIMIT_LOWER_Z
+                ):
+                    # now it has DEFINITELY exceeded the limits. return false
+                    return False
+
+    # TCP check complete, now check the colliders
+    # invert it as check_collisions returns whether a collision HAS occured,
+    # and we want if one HAS NOT occured
+    return not RM.check_collisions(ENVIRONMENTAL_COLLIDERS)
 
 # returns true/false on success/failure
 def safeMove(pos):

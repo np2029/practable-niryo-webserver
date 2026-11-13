@@ -483,6 +483,24 @@ class RoboticManipulator:
 
             f.write("endsolid RM\n")
 
+    # convenience function to just get an array of all the colliders
+    def get_colliders(self):
+        colliders = []
+        for j in self.joints:
+            for l in j.links:
+                for c in l.colliders:
+                    colliders.append(c)
+        return colliders
+
+    # convenience function to just get an array of all the arm's verts
+    def get_verts(self):
+        verts = []
+        cs = self.get_colliders()
+        for c in cs:
+            if type(c) == CuboidCollider or type(c) == AlignedCuboidCollider:
+                verts.append(cs.get_verts())
+        return verts
+
 
 # collider superclass
 # got a bunch of "abstract" methods, don't want to bloat with actual abstraction package
