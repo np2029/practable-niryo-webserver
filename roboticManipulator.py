@@ -498,7 +498,7 @@ class RoboticManipulator:
         cs = self.get_colliders()
         for c in cs:
             if type(c) == CuboidCollider or type(c) == AlignedCuboidCollider:
-                verts.append(cs.get_verts())
+                verts.append(c.get_verts())
         return verts
 
 
