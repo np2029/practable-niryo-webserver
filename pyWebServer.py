@@ -544,7 +544,7 @@ def verifyPosition(position):
     # check TCP bounds first because its quicker
     # also because its quicker, we can check the bounding spheres first
     for c in armColliders:
-        cpos = c.get_position
+        cpos = c.get_position()
         if (
            cpos[0] + c.get_bounding_sphere_radius() > TCP_LIMIT_UPPER_X
         or cpos[0] - c.get_bounding_sphere_radius() < TCP_LIMIT_LOWER_X
