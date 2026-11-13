@@ -300,6 +300,18 @@ JOINT_GRIPPER = RoboticManipulator.Joint(
     name="Gripper"
 )
 
+# in-order joint array for convenience
+JOINTS_IN_ORDER = [
+    JOINT_BASE,
+    JOINT_SHOULDER,
+    JOINT_ARM,
+    JOINT_ELBOW,
+    JOINT_FOREARM,
+    JOINT_WRIST,
+    JOINT_HAND,
+    JOINT_GRIPPER,
+]
+
 # now we make the links
 LINK_BASE_SHOULDER = RoboticManipulator.Link(parentJoint=JOINT_BASE, name="Base -> Shoulder Link")
 LINK_SHOULDER_ARM = RoboticManipulator.Link(parentJoint=JOINT_SHOULDER, name="Shoulder -> Arm Link")
@@ -515,6 +527,10 @@ def verifyPosition(position):
         # incorrect object given
         raise TypeError(f"unsupported type {type(position)} for verifyPosition")
 
+    # use pos to update the joint angles
+    for i in range(6):
+        JOINTS_IN_ORDER[i+1].set_angle(pos[i])
+
     # we need to check 2 things:
     # 1: the hard TCP bounds limits
     # 2: the environmental colliders
@@ -696,7 +712,7 @@ def practableThreadFunction():
                 })
                 # print(f"{CS_P}RECEIVED BAD COMMAND: {messageJSON}")
                 # addToLogQueue(CS_P, f"RECEIVED BAD COMMAND: {messageJSON}")
-                logEvent(CS_P, LogEvents.PRACTABLE_ERROR_BAD_PACKET, {messageJSON}, f"RECEIVED BAD COMMAND: {messageJSON}")
+                logEvent(CS_P, LogEvents.PRACTABLE_ERROR_BAD_PACKET, messageJSON, f"RECEIVED BAD COMMAND: {messageJSON}")
                 continue
 
             # json is correct, check if command variable exists
@@ -1206,7 +1222,10 @@ def armThreadFunction():
 
                 case "idle":
                     # behaviour when no commands are recieved for an extended period
-                    # right now, just go home
+                    # right now, just go home and open the gripper
+                    if not gripperOpen:
+                        robot.open_gripper()
+                        gripperOpen = True
                     robot.move(robot.get_home_pose())
 
             # log successful execution
